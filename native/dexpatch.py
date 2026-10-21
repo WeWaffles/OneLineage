@@ -18,6 +18,7 @@ Zipalign the result (zipalign -f -p 4): ART only maps 4-byte aligned dex
 entries directly.
 """
 import hashlib
+import os
 import struct
 import sys
 import zipfile
@@ -60,10 +61,12 @@ def patch_dex(dex, class_desc, names):
         raise SystemExit("class not found: " + class_desc)
 
     patched = []
+    defined = False
     for c in range(class_defs_size):
         base = class_defs_off + 32 * c
         if struct.unpack_from("<I", d, base)[0] != target_type:
             continue
+        defined = True
         class_data_off = struct.unpack_from("<I", d, base + 24)[0]
         off = class_data_off
         sf, off = uleb(d, off)
@@ -110,6 +113,9 @@ def patch_dex(dex, class_desc, names):
                 d[at:at + 2 * insns] = struct.pack("<%dH" % insns, *units)
                 patched.append("%s %s -> %d units, first %s (code @0x%x)"
                                % (name, ret, insns, " ".join("%04x" % u for u in units[:3]), code_off))
+    if not defined:
+        # Only referenced here (multidex): let main() try the next dex.
+        raise SystemExit("class not found: " + class_desc)
     if not patched:
         raise SystemExit("no matching methods with code in " + class_desc)
 
@@ -123,21 +129,29 @@ def main():
     names = set(sys.argv[4:])
     zin = zipfile.ZipFile(src)
     found = False
-    with zipfile.ZipFile(dst, "w") as zout:
-        for info in zin.infolist():
-            data = zin.read(info.filename)
-            if info.filename.startswith("classes") and info.filename.endswith(".dex") and not found:
-                try:
-                    data, patched = patch_dex(data, class_desc, names)
-                    found = True
-                    for p in patched:
-                        print(info.filename + ": " + p)
-                except SystemExit as e:
-                    if "class not found" not in str(e):
-                        raise
-            zout.writestr(info, data, compress_type=info.compress_type)
-    if not found:
-        raise SystemExit("class not found in any dex: " + class_desc)
+    # Write to a temp file and rename only on success, so a failed run never
+    # leaves a plausible-looking (but unpatched or truncated) jar at dst.
+    tmp = dst + ".tmp"
+    try:
+        with zipfile.ZipFile(tmp, "w") as zout:
+            for info in zin.infolist():
+                data = zin.read(info.filename)
+                if info.filename.startswith("classes") and info.filename.endswith(".dex") and not found:
+                    try:
+                        data, patched = patch_dex(data, class_desc, names)
+                        found = True
+                        for p in patched:
+                            print(info.filename + ": " + p)
+                    except SystemExit as e:
+                        if "class not found" not in str(e):
+                            raise
+                zout.writestr(info, data, compress_type=info.compress_type)
+        if not found:
+            raise SystemExit("class not found in any dex: " + class_desc)
+        os.replace(tmp, dst)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
 if __name__ == "__main__":

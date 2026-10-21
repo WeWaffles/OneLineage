@@ -50,7 +50,11 @@ echo "SELinux mode: $(getenforce 2>/dev/null || echo unknown)"
 # and is NOT fixable here - see the "Codec overheating" note in the README for
 # the architectural fix (give the guest its own media/codec service instead of
 # binding Samsung's).
-for t in MediaCodecList AString libbinder.Parcel Parcel ResourcesManager; do
+# CaptureStateTracker: HyperOS's sound-trigger capture tracker retries One UI's
+# audio_policy service (interface mismatch) in a tight loop, logging "Audio
+# policy service died" thousands of times a second; unsilenced it starves logd
+# and makes dumpsys (and so the UI activator) time out.
+for t in MediaCodecList AString libbinder.Parcel Parcel ResourcesManager CaptureStateTracker BOOTPROF GED; do
     setprop log.tag.$t SILENT 2>/dev/null || true
 done
 
@@ -74,7 +78,11 @@ ims_st=1
 # with no telephony.registry, each dumpsys below blocks for its full timeout
 # and this gate stalls for minutes before the pivot. Nothing to wait for then.
 # (Positive match: ": not found" does not contain ": found".)
-if ! service check telephony.registry 2>/dev/null | grep -q ': found'; then
+# Test the HOST zygote, not the service: a still-running guest registers its own
+# telephony.registry in the shared servicemanager, which would keep this gate
+# waiting on dumpsys calls against a busy guest system_server.
+if [ "$(getprop init.svc.zygote)" != "running" ] || \
+        ! service check telephony.registry 2>/dev/null | grep -q ': found'; then
     ims_i=45
     echo "IMS gate: skipped (no host telephony.registry - framework already down)"
 fi
