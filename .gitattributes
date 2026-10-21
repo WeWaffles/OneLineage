@@ -1,0 +1,11 @@
+# Shell scripts staged onto the device MUST stay LF, or /system/bin/sh on the
+# phone dies with "export: X: is not an identifier" on the first CRLF line.
+# (core.autocrlf=true on Windows will otherwise rewrite them on checkout.)
+*.sh text eol=lf
+
+# Prebuilt binaries / archives shipped as assets — never touch.
+assets/zygote_exec binary
+assets/7zz binary
+*.jar binary
+*.apk binary
+*.idsig binary

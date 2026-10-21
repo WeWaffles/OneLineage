@@ -112,6 +112,29 @@ if [ -f "$STAGE/PermissionController_patched.apk" ]; then
     fi
 fi
 
+# UI sound-effect decode hang = the overheating. At idle the guest cannot finish
+# a Vorbis decode of the UI sound .ogg files: AudioService's SoundPool
+# (Effect_Tick/KeypressStandard) and the keyguard SoundPool (Lock/Unlock/Trusted)
+# call SoundPool.load() on them and the decode spins against mediaserver forever
+# (~220% mediaserver + ~80% each in system_server/systemui, ~100 C; profiled to
+# these exact files via /proc/<pid>/fd, SoundDecoder_1/_2 top in simpleperf).
+# Mask the UI-sounds dirs with empty tmpfs HERE - on the assembled $ROOTFS, in
+# the host namespace, before master_inner unshares/pivots - so every guest
+# process (zygote -> system_server/systemui) sees them empty and SoundPool.load()
+# fails fast and is skipped instead of hanging. Doing this inside master_inner
+# (after the unshare) did NOT propagate to the zygote children; the patched-jar
+# binds above work precisely because they are done here, so the mask must be too.
+# Host One UI is untouched (this is the staged GSI rootfs only).
+for uidir in system/product/media/audio/ui product/media/audio/ui \
+             system/media/audio/ui system_ext/media/audio/ui; do
+    if [ -d "$ROOTFS/$uidir" ]; then
+        $BB umount -l "$ROOTFS/$uidir" 2>/dev/null || true
+        $BB mount -t tmpfs -o size=64k,mode=0755 tmpfs "$ROOTFS/$uidir" \
+            && echo "Masked UI sounds (decode-hang fix): $ROOTFS/$uidir" \
+            || echo "WARN: could not mask $ROOTFS/$uidir"
+    fi
+done
+
 
 
 echo "=== 5. Setting up Isolated Data & Bridges ==="

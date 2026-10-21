@@ -49,6 +49,8 @@ exec 8<&-
 
 echo "[Pivoted Root] Testing su availability:"
 su -c id || echo "su check non-fatal"
+# (UI sound-effect decode-hang fix lives in master_prepare.sh, where it masks
+# the UI-sounds dirs on $ROOTFS before the pivot so zygote's children inherit it.)
 
 echo "[Pivoted Root] Starting LineageOS SurfaceFlinger..."
 # sf.log used to grow without bound: the guest's RenderEngine dumps LLVM IR for
@@ -110,6 +112,42 @@ else
     /system/bin/sh /data/local/tmp/app_storage_loop.sh < /dev/null > /dev/null 2>&1 &
 fi
 echo "[Pivoted Root] App storage sweeper started..."
+
+# Media / codec list. The guest framework (system_server, SystemUI) fetches the
+# codec list from the "media.player" service through the SHARED servicemanager.
+# Samsung's host mediaserver owns that name, but its IMediaPlayerService binder
+# layout differs from the GSI's, so the guest reads the reply as garbage
+# ("enforceInterface() expected 'android.gui.IGraphicBufferProducer' but read
+# 'android.media.IMediaCodecList'"), caches a bogus-length codec list and spins
+# findCodecForFormat forever (~120% CPU per process, ~100 C - the overheating).
+# Same play as wificond above: start the GSI's OWN mediaserver so it re-registers
+# media.player with the guest-matching interface and builds a valid codec list
+# from the vendor Codec2 HAL over hwbinder (a Treble-stable vendor interface,
+# unlike Samsung's framework binder). addService is last-writer-wins and the
+# host's mediaserver registered at boot, so starting ours now takes the name.
+# This MUST precede zygote: MediaCodecList::getInstance() caches the first list
+# it sees, so no guest process may query media.player before ours is registered.
+if [ -x /system/bin/mediaserver ]; then
+    echo "[Pivoted Root] Starting LineageOS mediaserver (guest-matching codec list)..."
+    /system/bin/mediaserver > /data/mediaserver.log 2>&1 &
+    MEDIA_PID=$!
+    echo "[Pivoted Root] mediaserver PID: $MEDIA_PID"
+    # Wait (max ~6 s) for ours to own media.player before zygote starts, so the
+    # framework never caches the host's poisoned list.
+    i=0
+    while [ "$i" -lt 12 ]; do
+        # "service check" prints "...: found" or "...: not found"; match only the
+        # positive form (": not found" does not contain ": found").
+        if /system/bin/service check media.player 2>/dev/null | grep -q ': found'; then
+            break
+        fi
+        i=$((i + 1))
+        sleep 0.5
+    done
+    echo "[Pivoted Root] media.player ready after $((i * 500))ms"
+else
+    echo "[Pivoted Root] WARNING: /system/bin/mediaserver not in GSI - codec spin mitigation (log silence) only"
+fi
 
 echo "[Pivoted Root] Cleaning stale sockets..."
 rm -f /dev/socket/zygote /dev/socket/usap_pool_primary 2>/dev/null || true

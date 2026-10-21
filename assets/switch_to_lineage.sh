@@ -33,6 +33,27 @@ echo "=== LINEAGEOS 23.2 TAKEOVER STARTING ==="
 setenforce 0 2>/dev/null || true
 echo "SELinux mode: $(getenforce 2>/dev/null || echo unknown)"
 
+# --- CODEC-SPIN LOG MITIGATION (partial) ---------------------------------
+# NOT a fix for the overheating, a damage-limiter for it. Root cause (profiled
+# with simpleperf, 2026-10): the guest's MediaCodecList resolves the codec-list
+# service through the SHARED servicemanager to one of Samsung's mediaserver
+# binder nodes whose interface descriptor does not match ("enforceInterface()
+# expected 'android.gui.IGraphicBufferProducer' but read
+# 'android.media.IMediaCodecList'"). The reply parcels as garbage, the lookup
+# never succeeds and never cleanly fails, so system_server + systemui retry it
+# thousands of times a second. Measured split: ~1/3 of the CPU was just LOGGING
+# that failure (logd pegged ~55%, kernel vsnprintf + Samsung sec_pmsg/pstore,
+# liblog) - that part is the "GB of logcat" the README mentions, and it also
+# wears the pstore. Silencing those tags before the guest boots cut
+# system_server/systemui from ~114%/111% to ~81%/78% and dropped logd off the
+# top entirely. The remaining ~75%-per-process spin is the binder retry itself
+# and is NOT fixable here - see the "Codec overheating" note in the README for
+# the architectural fix (give the guest its own media/codec service instead of
+# binding Samsung's).
+for t in MediaCodecList AString libbinder.Parcel Parcel ResourcesManager; do
+    setprop log.tag.$t SILENT 2>/dev/null || true
+done
+
 # --- IMS / SMS REGISTRATION GATE -----------------------------------------
 # The guest has no ImsService of its own, so the modem's IMS registration is
 # owned by One UI's imsd and survives the takeover. That registration is what
@@ -130,9 +151,14 @@ if ! ps -ef 2>/dev/null | grep -v grep | grep -q "ims_watchdog.sh"; then
     cat > /data/local/tmp/ims_watchdog.sh <<'IMSW'
 #!/system/bin/sh
 LOG=/data/local/tmp/ims_watchdog.log
+# Only ever (re)start imsd - never poke the radio/APN here. A dead imsd is the
+# one failure that silently degrades SMS to "arrives on the SMSC retry", so we
+# just make sure the daemon exists. A 20 s poll catches a crash well before the
+# next SMSC retry window; init.svc covers the brief window where the process is
+# respawning and pidof would miss it.
 while true; do
-    sleep 60
-    if ! pidof imsd >/dev/null 2>&1; then
+    sleep 20
+    if ! pidof imsd >/dev/null 2>&1 && [ "$(getprop init.svc.imsd)" != "running" ]; then
         setprop ctl.start imsd 2>/dev/null
         echo "$(date) restarted imsd (was missing)" >> "$LOG"
     fi
