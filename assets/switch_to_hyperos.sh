@@ -88,7 +88,7 @@ echo "IMS gate: voiceRegState=$ims_st after $((ims_i * 2))s, imsd=${ims_pid:-$(p
 # Keep it supervised from the host namespace for the whole session; the watchdog
 # is stopped again by return_to_oneui.sh.
 if ! ps -ef 2>/dev/null | grep -v grep | grep -q "adb_watchdog.sh"; then
-    cat > /data/local/tmp/adb_watchdog.sh <<'ADBW'
+    cat > /data/local/tmp/hyper_stage/adb_watchdog.sh <<'ADBW'
 #!/system/bin/sh
 # Watchdog for the host adbd, which is the only way into the phone while Lineage
 # is up. Two failure modes are handled:
@@ -96,7 +96,7 @@ if ! ps -ef 2>/dev/null | grep -v grep | grep -q "adb_watchdog.sh"; then
 #   2. adbd is alive but the USB gadget lost the adb function. The guest's own
 #      UsbService rewrites sys.usb.config during boot, and a plain setprop is a
 #      no-op in that state, so the gadget has to be re-applied by toggling it.
-LOG=/data/local/tmp/adb_watchdog.log
+LOG=/data/local/tmp/hyper_stage/adb_watchdog.log
 last_toggle=0
 while true; do
     sleep 10
@@ -133,13 +133,13 @@ while true; do
     esac
 done
 ADBW
-    chmod 755 /data/local/tmp/adb_watchdog.sh
+    chmod 755 /data/local/tmp/hyper_stage/adb_watchdog.sh
     if command -v setsid >/dev/null 2>&1; then
-        setsid /system/bin/sh /data/local/tmp/adb_watchdog.sh </dev/null >/dev/null 2>&1 &
+        setsid /system/bin/sh /data/local/tmp/hyper_stage/adb_watchdog.sh </dev/null >/dev/null 2>&1 &
     else
-        nohup /system/bin/sh /data/local/tmp/adb_watchdog.sh </dev/null >/dev/null 2>&1 &
+        nohup /system/bin/sh /data/local/tmp/hyper_stage/adb_watchdog.sh </dev/null >/dev/null 2>&1 &
     fi
-    echo "adbd watchdog started (log: /data/local/tmp/adb_watchdog.log)"
+    echo "adbd watchdog started (log: /data/local/tmp/hyper_stage/adb_watchdog.log)"
 fi
 
 # --- IMS KEEPALIVE --------------------------------------------------------
@@ -148,9 +148,9 @@ fi
 # SMS quietly degrades to "arrives whenever the SMSC next retries", so keep it
 # supervised for the whole Lineage session.
 if ! ps -ef 2>/dev/null | grep -v grep | grep -q "ims_watchdog.sh"; then
-    cat > /data/local/tmp/ims_watchdog.sh <<'IMSW'
+    cat > /data/local/tmp/hyper_stage/ims_watchdog.sh <<'IMSW'
 #!/system/bin/sh
-LOG=/data/local/tmp/ims_watchdog.log
+LOG=/data/local/tmp/hyper_stage/ims_watchdog.log
 # Only ever (re)start imsd - never poke the radio/APN here. A dead imsd is the
 # one failure that silently degrades SMS to "arrives on the SMSC retry", so we
 # just make sure the daemon exists. A 20 s poll catches a crash well before the
@@ -164,13 +164,13 @@ while true; do
     fi
 done
 IMSW
-    chmod 755 /data/local/tmp/ims_watchdog.sh
+    chmod 755 /data/local/tmp/hyper_stage/ims_watchdog.sh
     if command -v setsid >/dev/null 2>&1; then
-        setsid /system/bin/sh /data/local/tmp/ims_watchdog.sh </dev/null >/dev/null 2>&1 &
+        setsid /system/bin/sh /data/local/tmp/hyper_stage/ims_watchdog.sh </dev/null >/dev/null 2>&1 &
     else
-        nohup /system/bin/sh /data/local/tmp/ims_watchdog.sh </dev/null >/dev/null 2>&1 &
+        nohup /system/bin/sh /data/local/tmp/hyper_stage/ims_watchdog.sh </dev/null >/dev/null 2>&1 &
     fi
-    echo "imsd keepalive started (log: /data/local/tmp/ims_watchdog.log)"
+    echo "imsd keepalive started (log: /data/local/tmp/hyper_stage/ims_watchdog.log)"
 fi
 
 # Set permissive privapp permissions to avoid Signature|privileged fatal exceptions
@@ -332,7 +332,7 @@ while true; do
             # Install microG if requested
             if [ -f \"\$STAGE/install_microg.flag\" ]; then
                 echo '[UI Activator] Installing microG components...'
-                for apk in \"\$STAGE/GmsCore.apk\" \"\$STAGE/FakeStore.apk\" /data/local/tmp/GmsCore.apk /data/local/tmp/FakeStore.apk; do
+                for apk in \"\$STAGE/GmsCore.apk\" \"\$STAGE/FakeStore.apk\"; do
                     if [ -f \"\$apk\" ]; then
                         echo \"[UI Activator] Installing \$apk...\"
                         \$BB nsenter -t \$PID -m /system/bin/pm install -r -g \"\$apk\" 2>/dev/null || true
@@ -361,6 +361,6 @@ while true; do
         fi
     fi
 done
-" </dev/null >/data/local/tmp/ui_activator.log 2>&1 &
+" </dev/null >/data/local/tmp/hyper_stage/ui_activator.log 2>&1 &
 
 echo "=== TAKEOVER LAUNCHED SUCCESSFULLY ==="

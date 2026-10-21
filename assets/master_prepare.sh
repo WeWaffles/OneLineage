@@ -33,7 +33,7 @@ fi
 
 mkdir -p "$ROOTFS"
 if ! mount | grep -q "$ROOTFS "; then
-    for l in $($BB losetup -a | grep "system.raw" | cut -d: -f1); do
+    for l in $($BB losetup -a | grep "$STAGE/system.raw" | cut -d: -f1); do
         $BB losetup -d "$l" 2>/dev/null || true
     done
     LOOP=$($BB losetup -f)

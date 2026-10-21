@@ -311,8 +311,7 @@ public class MainActivity extends Activity {
                         "  base=$(basename \"$f\"); " +
                         "  cp -f \"$f\" \"" + STAGE_DIR + "/$base\"; " +
                         "done && " +
-                        "cp -f " + filesDir.getAbsolutePath() + "/7zz /data/local/tmp/7zz 2>/dev/null; " +
-                        "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/7zz /data/local/tmp/7zz 2>/dev/null"
+                        "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/7zz 2>/dev/null"
                     }).waitFor();
                 } catch (Exception ignored) {}
             }

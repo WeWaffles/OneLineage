@@ -46,7 +46,7 @@ while mount | grep -q "/data/local/tmp/hyper_stage/rootfs"; do
 done
 BB=$(which busybox 2>/dev/null || echo /data/adb/ksu/bin/busybox)
 if [ -x "$BB" ]; then
-    for l in $($BB losetup -a | grep "system.raw" | cut -d: -f1); do
+    for l in $($BB losetup -a | grep "/data/local/tmp/hyper_stage/system.raw" | cut -d: -f1); do
         $BB losetup -d "$l" 2>/dev/null || true
     done
 fi

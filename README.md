@@ -30,6 +30,7 @@ At the time of the fork this was the only Android 16 Global HyperOS GSI that Mys
 - **Pre-created data dirs:** `com.miui.home` and `com.miui.securitycenter` replace `org.lineageos.lineagesettings`.
 - **Detection:** the app checks `ro.mi.os.version.name` instead of `ro.lineage.version`. Cleanup kills `com.miui.*`/`com.xiaomi.*` instead of `org.lineageos.*`.
 - **Renames:** `switch_to_lineage.sh` → `switch_to_hyperos.sh`; `lineage_stage`/`lineage_backups` → `hyper_stage`/`hyper_backups`.
+- **Fully separate install:** everything OneHyper writes on the host lives under `/data/local/tmp/hyper_stage`: the image, rootfs, guest `/data`, the adb/imsd watchdogs and their logs, and `ui_activator.log`. Loop-device cleanup only detaches `hyper_stage/system.raw`. Installing, deleting or running OneHyper never touches `lineage_stage`. Shared on purpose: your photos and downloads (`/data/media`), as with One UI. Only one container can run at a time.
 - **Build:** adds `build_apk_windows.sh` for Git Bash on Windows. It uses JDK 21 and SDK build-tools/platform 36.
 - Internal Java identifiers (`btnBootLineage` and the like) are unchanged on purpose, so upstream OneLineage fixes merge cleanly.
 
