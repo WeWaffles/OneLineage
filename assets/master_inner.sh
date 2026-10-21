@@ -149,6 +149,25 @@ else
     echo "[Pivoted Root] WARNING: /system/bin/mediaserver not in GSI - codec spin mitigation (log silence) only"
 fi
 
+# Classpaths. This shell inherits the HOST's BOOTCLASSPATH/SYSTEMSERVERCLASSPATH
+# (Samsung's: knoxsdk.jar, esecomm.jar, ...). The LineageOS GSI only needs AOSP
+# jars so that happened to work, but HyperOS's framework.jar links against
+# miui-framework/xiaomi-framework/mediatek-* boot jars in /system_ext/framework:
+# zygote dies preloading SystemServiceRegistry with NoClassDefFoundError.
+# Derive them from the guest's own classpath fragments, as init does on a real
+# boot (system/etc/classpaths/*.pb + the APEX fragments).
+DERIVED=/data/derived_classpath
+rm -f "$DERIVED"
+if /apex/com.android.sdkext/bin/derive_classpath "$DERIVED" 2>/data/derive_classpath.log \
+        && grep -q '^export BOOTCLASSPATH ' "$DERIVED"; then
+    while read -r kw name value; do
+        [ "$kw" = export ] && [ -n "$name" ] && export "$name=$value"
+    done < "$DERIVED"
+    echo "[Pivoted Root] Classpaths derived from guest fragments ($(echo "$BOOTCLASSPATH" | tr ':' '\n' | wc -l) boot jars)"
+else
+    echo "[Pivoted Root] WARNING: derive_classpath failed, zygote keeps the host classpath: $(head -n1 /data/derive_classpath.log 2>/dev/null)"
+fi
+
 echo "[Pivoted Root] Cleaning stale sockets..."
 rm -f /dev/socket/zygote /dev/socket/usap_pool_primary 2>/dev/null || true
 
