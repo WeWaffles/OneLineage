@@ -58,15 +58,17 @@ static int make_socket(const char *path, int target_fd) {
 }
 
 int main(void) {
-    int devnull = open("/dev/null", O_RDWR);
-    int errlog = open("/data/zygote_stderr.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    // All stdio must be /dev/null: zygote's fd sanitizer aborts the
+    // system_server fork on any open regular file it does not allowlist
+    // ("Not allowlisted (101): /data/zygote_stderr.log"). Setup errors go to
+    // the log file instead, opened only once something has failed.
+    int devnull = open("/dev/null", O_RDWR | O_CLOEXEC);
+    int errlog = open("/data/zygote_stderr.log", O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (devnull >= 0) {
         dup2(devnull, 0);
         dup2(devnull, 1);
     }
     if (errlog >= 0) dup2(errlog, 2);
-    if (devnull > 2) close(devnull);
-    if (errlog > 2) close(errlog);
 
     mkdir("/dev/socket", 0755);
     if (make_socket("/dev/socket/zygote", 3) < 0) return 1;
@@ -91,7 +93,9 @@ int main(void) {
         "zygote64", "-Xzygote", "-Xforcejitzygote", "/system/bin",
         "--zygote", "--start-system-server", "--socket-name=zygote", NULL,
     };
+    if (devnull >= 0) dup2(devnull, 2);
     execv("/system/bin/app_process64", argv);
+    if (errlog >= 0) dup2(errlog, 2);
     perror("execv /system/bin/app_process64");
     return 1;
 }

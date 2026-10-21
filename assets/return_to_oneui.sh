@@ -71,6 +71,17 @@ done
 am force-stop com.sec.android.app.launcher 2>/dev/null || true
 am start -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null || true
 
+# Drop the guest-only build props switch_to_hyperos.sh imported (they were never
+# persisted, so a reboot clears them too).
+RP=$(which resetprop 2>/dev/null || echo /data/adb/ksu/bin/resetprop)
+ADDED_PROPS=/data/local/tmp/hyper_stage/added_props.txt
+if [ -x "$RP" ] && [ -f "$ADDED_PROPS" ]; then
+    while read -r k; do
+        [ -n "$k" ] && "$RP" --delete "$k" 2>/dev/null
+    done < "$ADDED_PROPS"
+    rm -f "$ADDED_PROPS"
+fi
+
 # switch_to_hyperos.sh drops SELinux to permissive for the takeover; restore it.
 setenforce 1 2>/dev/null || true
 echo "SELinux mode: $(getenforce 2>/dev/null || echo unknown)"

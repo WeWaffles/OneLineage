@@ -228,6 +228,35 @@ if [ $PREP_RET -ne 0 ]; then
     exit 1
 fi
 
+# --- GUEST BUILD PROPERTIES ---
+# The guest has no init, so it reads the HOST's property area and never sees its
+# own build.prop. AOSP-based GSIs get by on One UI's values; HyperOS does not:
+# PackageManagerService aborts on its extra dexopt reasons ("PMS compiler filter
+# settings are bad", pm.dexopt.first-use/baseline/secondary/install-create-dm),
+# and MIUI services key off ro.miui.* / ro.mi.os.*. Import only keys the host
+# LACKS -- host values (radio, vendor, boot) must stay untouched for One UI --
+# runtime-only (-n, nothing persisted), and record them so return_to_oneui.sh
+# can delete them again.
+ROOTFS="$STAGE/rootfs"
+ADDED_PROPS="$STAGE/added_props.txt"
+if [ -n "$RP" ] && [ -x "$RP" ]; then
+    getprop | sed -n 's/^\[\([^]]*\)\].*/\1/p' > "$STAGE/host_prop_keys.txt"
+    cat "$ROOTFS/system/build.prop" "$ROOTFS/system_ext/etc/build.prop" \
+        "$ROOTFS/product/etc/build.prop" 2>/dev/null \
+      | $BB awk -F= -v keys="$STAGE/host_prop_keys.txt" '
+            BEGIN { while ((getline k < keys) > 0) have[k] = 1 }
+            /^[ \t]*#/ || !/=/ || /^import / { next }
+            { k = $1; sub(/^[^=]*=/, ""); if (!(k in have) && !(k in seen)) { seen[k] = 1; print k "=" $0 } }
+        ' > "$STAGE/guest_props.txt"
+    cut -d= -f1 "$STAGE/guest_props.txt" >> "$ADDED_PROPS"
+    sort -u "$ADDED_PROPS" -o "$ADDED_PROPS" 2>/dev/null || true
+    "$RP" -n -f "$STAGE/guest_props.txt" 2>/dev/null \
+        && echo "Imported $(wc -l < "$STAGE/guest_props.txt") guest-only build props (e.g. ro.mi.os.version.name=$(getprop ro.mi.os.version.name))" \
+        || echo "WARNING: resetprop -f failed; guest-only props not imported"
+else
+    echo "WARNING: resetprop not found; guest-only build props not imported"
+fi
+
 # --- STOP HOST DAEMONS & LAUNCH CONTAINER ---
 echo "=== [6/6] Launching HyperOS Takeover Daemon ==="
 pkill -f "while true; do [ \"\$(getprop init.svc.zygote)\"" 2>/dev/null || true

@@ -49,6 +49,13 @@ mkdir -p "$ROOTFS/postinstall" "$ROOTFS/dev" "$ROOTFS/proc" "$ROOTFS/sys" \
 echo "=== 4. Setting up Core System Bind Mounts ==="
 mount | grep -q "$ROOTFS/proc " || $BB mount -t proc proc "$ROOTFS/proc"
 mount | grep -q "$ROOTFS/sys " || $BB mount -t sysfs sysfs "$ROOTFS/sys"
+# A fresh sysfs does not carry the host's cgroup2 mount, so /sys/fs/cgroup is an
+# empty dir in the container. HyperOS's libprocessgroup puts system_server in
+# /sys/fs/cgroup/system/uid_1000 and aborts the fork (createProcessGroup ENOENT)
+# without it. The v1 controllers under /dev already come along with /dev.
+if grep -q ' /sys/fs/cgroup cgroup2 ' /proc/mounts; then
+    mount | grep -q "$ROOTFS/sys/fs/cgroup " || $BB mount --bind /sys/fs/cgroup "$ROOTFS/sys/fs/cgroup"
+fi
 
 if [ ! -e /dev/binderfs/binder ]; then
     mount -t binder binder /dev/binderfs 2>/dev/null || true
@@ -76,6 +83,18 @@ if [ -d /system_ext/apex ]; then
     mount | grep -q "$ROOTFS/system_ext/apex " || $BB mount --bind /system_ext/apex "$ROOTFS/system_ext/apex"
 fi
 mount | grep -q "$ROOTFS/mnt " || $BB mount --rbind /mnt "$ROOTFS/mnt"
+# cgroup layout. libprocessgroup in the guest reads cgroups.json/task_profiles.json
+# to find the hierarchy, but the hierarchy itself was mounted by the HOST's init
+# (there is no guest init). If the two disagree, system_server's fork dies in
+# createProcessGroup(1000, 0) with ENOENT -- HyperOS (goya) describes memcg v1 at
+# /dev/memcg, while One UI mounts memory under cgroup v2 with apps/ + system/.
+# Describe the hierarchy that actually exists.
+for f in cgroups.json task_profiles.json; do
+    if [ -f "/system/etc/$f" ] && [ -f "$ROOTFS/system/etc/$f" ]; then
+        $BB umount -l "$ROOTFS/system/etc/$f" 2>/dev/null || true
+        $BB mount --bind "/system/etc/$f" "$ROOTFS/system/etc/$f" && echo "Bound host $f"
+    fi
+done
 if [ -f "$STAGE/services_patched.jar" ]; then
     $BB umount -l "$ROOTFS/system/framework/services.jar" 2>/dev/null || true
     $BB mount --bind "$STAGE/services_patched.jar" "$ROOTFS/system/framework/services.jar"
@@ -586,6 +605,14 @@ if [ -f "$STAGE/clean_apex_info_list.xml" ]; then
     cp "$STAGE/clean_apex_info_list.xml" "$ROOTFS/apex/apex-info-list.xml"
 else
     cp -a /apex/apex-info-list.xml "$ROOTFS/apex/" 2>/dev/null || true
+fi
+# HyperOS's read-only image has no system_ext/apex dir to bind onto (mkdir fails),
+# so the host's /system_ext/apex entries (com.android.compos) cannot resolve and
+# PMS aborts in scanApexPackages ("Unable to parse /system_ext/apex/..."). Drop
+# them when the bind is missing; CompOS is unused in the container anyway.
+if ! mount | grep -q "$ROOTFS/system_ext/apex "; then
+    sed -i '/modulePath="\/system_ext\/apex\//d' "$ROOTFS/apex/apex-info-list.xml" \
+        && echo "Dropped /system_ext/apex entries from apex-info-list (no bind target)"
 fi
 chmod 644 "$ROOTFS/apex/apex-info-list.xml" 2>/dev/null || true
 
