@@ -34,13 +34,22 @@ At the time of the fork this was the only Android 16 Global HyperOS GSI that Mys
 - **Build:** adds `build_apk_windows.sh` for Git Bash on Windows. It uses JDK 21 and SDK build-tools/platform 36.
 - Internal Java identifiers (`btnBootLineage` and the like) are unchanged on purpose, so upstream OneLineage fixes merge cleanly.
 
-## Status
-- APK builds and packages correctly.
-- **Not yet boot-tested on a device.** Likely HyperOS-specific trouble spots, in no particular order:
-  - Xiaomi services that expect Xiaomi `ro.product.*`/`ro.miui.*` properties or vendor HALs.
-  - MIUI's provisioning/OOBE flow.
-  - The MIUI launcher (`com.miui.home`).
-  - Whatever Lineage-specific crash `services_patched.jar`/`framework_patched.jar` worked around.
+## Status (tested on SM-S948U, One UI 8.5 / Android 16)
+- **HyperOS boots to its first frame and then system_server dies.** system_server starts every service and reaches its main loop. SurfaceFlinger logs `Boot is finished`, `FallbackHome` is displayed, and SystemUI and `com.miui.home` are launched. The "There's an internal problem with your device" dialog also appears; it is expected for a GSI (system/vendor fingerprint mismatch).
+- **Open blocker:** while unlocking user 0, `LockSettingsService.unlockUserKeyIfUnsecured` makes `StorageManagerService.unlockCeStorage` call the guest vold, which has no user-0 key and throws. One UI already unlocked that storage on the host. The fix is to skip that vold call while keeping the rest of `unlockCeStorage`, which marks the user as unlocked. Not done yet.
+
+### What it took to get this far
+- **Classpaths.** The original `zygote_exec` hard-coded LineageOS's BOOTCLASSPATH/SYSTEMSERVERCLASSPATH (including `org.lineageos.platform.jar`). It is rebuilt from `native/zygote_exec.c` to inherit its environment. `master_inner.sh` derives the classpaths from the guest's own fragments with `derive_classpath`: 62 boot jars, including miui/xiaomi/mediatek. All stdio stays on `/dev/null` (zygote's fd allowlist).
+- **Host mounts and config.** Every host mount under `/sys` is bound in (cgroup2 for `createProcessGroup`, bpffs for NetworkStats), along with the host `cgroups.json`/`task_profiles.json`. A tmpfs overlay on `/system_ext` provides the `apex/` dir that host apexd reports.
+- **Properties.** Guest-only `build.prop` keys are imported at runtime and never override host values. `return_to_oneui.sh` removes them again.
+- **Settings.** The seeded `adb_enabled` entry uses a numeric id. A non-numeric one makes SettingsProvider reject the whole file.
+- **KernelSU.** When the guest PMS finishes, KernelSU's allowlist gets pruned and persisted. A root agent started before the takeover keeps restoring `.allowlist` and runs adb commands from `hyper_stage/agent/cmd.sh`.
+- **Framework stubs** made with `native/dexpatch.py`, then zipaligned. They live in `hyper_stage/patched/<path>` and are bind-mounted over `rootfs/<path>`. They are not shipped in the repo or APK because they are modified Xiaomi binaries:
+  - `system_ext/framework/miui-services.jar`: the `MiuiNetworkManagementService` methods that call Xiaomi's `IOemNetd` (Samsung netd rejects them), plus `TorchModeHelper$TorchCallback.onTorchModeChanged` (Samsung cameraserver).
+  - `system_ext/framework/miui-wifi-service.jar`: `AmlMiuiWifiHalHandler.getWifiSupplicantXmIface` (Xiaomi supplicant extension).
+  - `system/framework/services.jar`:
+    - `LockSettingsService.migrateUserToSpWithBoundKeysLocked`, a key migration the container must not run.
+    - `SystemServer.startApexServices`. Host apexd reports Samsung APEX services, and skipping them also skips UWB, ranging, profiling and device-lock.
 
 ## What's in here
 | Path | What it is |

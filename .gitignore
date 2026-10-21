@@ -2,3 +2,5 @@ build/
 keystore/
 backups_*/
 *.idsig
+patched/
+__pycache__/

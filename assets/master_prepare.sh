@@ -49,13 +49,17 @@ mkdir -p "$ROOTFS/postinstall" "$ROOTFS/dev" "$ROOTFS/proc" "$ROOTFS/sys" \
 echo "=== 4. Setting up Core System Bind Mounts ==="
 mount | grep -q "$ROOTFS/proc " || $BB mount -t proc proc "$ROOTFS/proc"
 mount | grep -q "$ROOTFS/sys " || $BB mount -t sysfs sysfs "$ROOTFS/sys"
-# A fresh sysfs does not carry the host's cgroup2 mount, so /sys/fs/cgroup is an
-# empty dir in the container. HyperOS's libprocessgroup puts system_server in
-# /sys/fs/cgroup/system/uid_1000 and aborts the fork (createProcessGroup ENOENT)
-# without it. The v1 controllers under /dev already come along with /dev.
-if grep -q ' /sys/fs/cgroup cgroup2 ' /proc/mounts; then
-    mount | grep -q "$ROOTFS/sys/fs/cgroup " || $BB mount --bind /sys/fs/cgroup "$ROOTFS/sys/fs/cgroup"
-fi
+# A fresh sysfs carries none of the filesystems the host's init mounted under
+# /sys, so they are empty dirs in the container. HyperOS hard-requires two:
+# cgroup2 (/sys/fs/cgroup: system_server's fork aborts in createProcessGroup
+# ENOENT) and bpffs (/sys/fs/bpf: NetworkStatsService aborts on the missing
+# clatd/netd maps). Bind every host mount under /sys (parents sort first), the
+# way init would have them.
+for mp in $($BB awk '$2 ~ "^/sys/" { print $2 }' /proc/mounts | sort -u); do
+    [ -d "$ROOTFS$mp" ] || continue
+    mount | grep -q " $ROOTFS$mp " || $BB mount --bind "$mp" "$ROOTFS$mp" 2>/dev/null \
+        && echo "Bound host $mp"
+done
 
 if [ ! -e /dev/binderfs/binder ]; then
     mount -t binder binder /dev/binderfs 2>/dev/null || true
@@ -78,6 +82,21 @@ mount | grep -q "$ROOTFS/vendor_dlkm " || $BB mount --bind /vendor_dlkm "$ROOTFS
 # tries to parse those exact paths inside this namespace. Keep the apex
 # directories identical to what host apexd sees (an empty tmpfs or the GSI's
 # own .capex layout makes PMS abort with "Unable to parse" at boot).
+if [ -d /system_ext/apex ] && [ ! -d "$ROOTFS/system_ext/apex" ] \
+        && ! mount | grep -q "$ROOTFS/system_ext type overlay"; then
+    # HyperOS's image has a real (read-only) /system_ext without an apex/ dir,
+    # so the bind below has no target, yet host apexd still reports
+    # /system_ext/apex/com.android.compos.apex and PMS aborts parsing it. Lay a
+    # tmpfs-backed overlay on top of it: the guest's files stay visible, and
+    # apex/ can be created. (LineageOS's image already had the dir.)
+    OVL="$STAGE/sysext_ovl"
+    mkdir -p "$OVL"
+    mount | grep -q "$OVL " || $BB mount -t tmpfs tmpfs "$OVL"
+    mkdir -p "$OVL/upper" "$OVL/work"
+    $BB mount -t overlay overlay \
+        -o "lowerdir=$ROOTFS/system_ext,upperdir=$OVL/upper,workdir=$OVL/work" \
+        "$ROOTFS/system_ext" && echo "Overlaid $ROOTFS/system_ext (for system_ext/apex)"
+fi
 if [ -d /system_ext/apex ]; then
     mkdir -p "$ROOTFS/system_ext/apex"
     mount | grep -q "$ROOTFS/system_ext/apex " || $BB mount --bind /system_ext/apex "$ROOTFS/system_ext/apex"
@@ -121,6 +140,23 @@ if [ -f "$STAGE/framework-res_patched.apk" ]; then
     echo "Bound framework-res_patched.apk -> $ROOTFS/system/framework/framework-res.apk"
 fi
 
+# Generic patched-file overrides: $STAGE/patched/<path> is bound over
+# $ROOTFS/<path>. HyperOS framework hooks into Xiaomi vendor services that the
+# host does not have get stubbed this way (native/dexpatch.py), e.g.
+# patched/system_ext/framework/miui-services.jar with
+# MiuiNetworkManagementService.setOemNetd -> return-void: Samsung netd's
+# IOemNetd rejects MIUI's listener with SecurityException, which killed
+# NetworkManagementService -> NetworkPolicy -> ConnectivityService (NPE).
+# Kept out of the APK/repo: they are modified Xiaomi binaries.
+if [ -d "$STAGE/patched" ]; then
+    (cd "$STAGE/patched" && find . -type f) | while read -r rel; do
+        rel=${rel#./}
+        [ -f "$ROOTFS/$rel" ] || { echo "WARNING: patched/$rel has no target in the image"; continue; }
+        chmod 644 "$STAGE/patched/$rel"
+        $BB umount -l "$ROOTFS/$rel" 2>/dev/null || true
+        $BB mount --bind "$STAGE/patched/$rel" "$ROOTFS/$rel" && echo "Bound patched $rel"
+    done
+fi
 if [ -f "$STAGE/PermissionController_patched.apk" ]; then
     chmod 644 "$STAGE/PermissionController_patched.apk"
     PERM_APK=$(find "$ROOTFS/apex/com.android.permission" -name "PermissionController.apk" 2>/dev/null | head -n 1)
@@ -170,11 +206,18 @@ mkdir -p "$STAGE/data/adb" "$STAGE/data/apex" "$STAGE/data/dalvik-cache/arm64"
 # seeing the phone entirely. Writing the XML now keeps the gadget stable through
 # the whole boot.
 GSET="$STAGE/data/system/users/0/settings_global.xml"
-if [ -f "$GSET" ]; then
-    if grep -q 'id="adb_enabled"' "$GSET" 2>/dev/null; then
-        sed -i 's/id="adb_enabled"\([^>]*\)value="[^"]*"/id="adb_enabled"\1value="1"/' "$GSET" 2>/dev/null
+# Setting ids are NUMERIC: an entry like id="adb_enabled" makes SettingsProvider
+# treat the whole file as corrupt, and with no .fallback system_server dies
+# ("No fallback file found for: /data/system/users/0/settings_global.xml").
+# Drop any such line an older version of this script appended, then update the
+# real entry (matched by name) or add one with the next free id.
+if [ -f "$GSET" ] && head -c 5 "$GSET" | grep -q '<?xml'; then
+    sed -i '/<setting id="adb_enabled"/d' "$GSET" 2>/dev/null
+    if grep -q 'name="adb_enabled"' "$GSET" 2>/dev/null; then
+        sed -i 's/\(name="adb_enabled"[^>]*value="\)[^"]*"/\11"/' "$GSET" 2>/dev/null
     else
-        sed -i 's#</settings>#    <setting id="adb_enabled" name="adb_enabled" value="1" package="android" />\n</settings>#' "$GSET" 2>/dev/null
+        NEXT_ID=$(( $(grep -o 'id="[0-9]*"' "$GSET" | tr -cd '0-9\n' | sort -n | tail -n 1) + 1 ))
+        sed -i "s#</settings>#    <setting id=\"$NEXT_ID\" name=\"adb_enabled\" value=\"1\" package=\"android\" />\n</settings>#" "$GSET" 2>/dev/null
     fi
     echo "Pre-seeded adb_enabled=1 in guest settings_global.xml"
 fi

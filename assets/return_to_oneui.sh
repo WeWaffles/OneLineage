@@ -11,6 +11,13 @@ pkill -9 -f "zygote_exec" 2>/dev/null || true
 # system_server comes back, so it cannot fight init over sys.usb.config.
 pkill -9 -f "adb_watchdog.sh" 2>/dev/null || true
 pkill -9 -f "ims_watchdog.sh" 2>/dev/null || true
+# Root agent from switch_to_hyperos.sh: put the pre-takeover KernelSU allowlist
+# back one last time, then stop it.
+pkill -9 -f "hyper_agent.sh" 2>/dev/null || true
+if [ -s /data/local/tmp/hyper_stage/ksu_allowlist.bak ]; then
+    cp -p /data/local/tmp/hyper_stage/ksu_allowlist.bak /data/adb/ksu/.allowlist 2>/dev/null \
+        && rm -f /data/local/tmp/hyper_stage/ksu_allowlist.bak
+fi
 pkill -9 -f "system_server" 2>/dev/null || true
 pkill -9 -f 'com\.miui\.|com\.xiaomi\.' 2>/dev/null || true
 pkill -9 -x zygote64 2>/dev/null || true
@@ -44,6 +51,8 @@ while mount | grep -q "/data/local/tmp/hyper_stage/rootfs"; do
     umount -l /data/local/tmp/hyper_stage/rootfs 2>/dev/null || true
     sleep 0.1
 done
+# tmpfs backing master_prepare.sh's /system_ext overlay
+umount -l /data/local/tmp/hyper_stage/sysext_ovl 2>/dev/null || true
 BB=$(which busybox 2>/dev/null || echo /data/adb/ksu/bin/busybox)
 if [ -x "$BB" ]; then
     for l in $($BB losetup -a | grep "/data/local/tmp/hyper_stage/system.raw" | cut -d: -f1); do

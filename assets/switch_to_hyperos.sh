@@ -70,6 +70,14 @@ if ! pidof imsd >/dev/null 2>&1; then
 fi
 ims_i=0
 ims_st=1
+# On a relaunch from a half-switched state One UI's framework is already gone:
+# with no telephony.registry, each dumpsys below blocks for its full timeout
+# and this gate stalls for minutes before the pivot. Nothing to wait for then.
+# (Positive match: ": not found" does not contain ": found".)
+if ! service check telephony.registry 2>/dev/null | grep -q ': found'; then
+    ims_i=45
+    echo "IMS gate: skipped (no host telephony.registry - framework already down)"
+fi
 while [ "$ims_i" -lt 45 ]; do
     if dumpsys telephony.registry 2>/dev/null | grep -q 'mVoiceRegState=0'; then
         ims_st=0
@@ -171,6 +179,54 @@ IMSW
         nohup /system/bin/sh /data/local/tmp/hyper_stage/ims_watchdog.sh </dev/null >/dev/null 2>&1 &
     fi
     echo "imsd keepalive started (log: /data/local/tmp/hyper_stage/ims_watchdog.log)"
+fi
+
+# --- ROOT AGENT (KernelSU allowlist guard + adb root) ----------------------
+# Once the guest's PackageManagerService finishes it writes its own
+# packages.list while the host's /data/app is bridged to the guest's (see
+# master_prepare.sh 5d). KernelSU tracks its manager and grants through those,
+# and on the first full HyperOS boot it pruned AND persisted its allowlist:
+# su vanished for adb and this app, and stayed gone after a reboot. Root that is
+# already held survives a prune, so this agent is started now, while we still
+# have it, and (a) keeps putting the pre-takeover .allowlist back, so a reboot
+# always restores the grants, and (b) runs commands adb drops in
+# $STAGE/agent/cmd.sh (shell-writable, unreachable for apps), output in
+# $STAGE/agent/out.txt, so the session stays debuggable without su.
+# return_to_oneui.sh stops it.
+KSU_ALLOW=/data/adb/ksu/.allowlist
+if [ -s "$KSU_ALLOW" ] && ! ps -ef 2>/dev/null | grep -v grep | grep -q "hyper_agent.sh"; then
+    cp -p "$KSU_ALLOW" "$STAGE/ksu_allowlist.bak" && echo "KernelSU allowlist snapshotted"
+fi
+mkdir -p "$STAGE/agent"
+chown shell:shell "$STAGE/agent" 2>/dev/null || true
+chmod 0770 "$STAGE/agent"
+if ! ps -ef 2>/dev/null | grep -v grep | grep -q "hyper_agent.sh"; then
+    cat > "$STAGE/hyper_agent.sh" <<'AGENT'
+#!/system/bin/sh
+S=/data/local/tmp/hyper_stage
+LOG=$S/agent/agent.log
+while true; do
+    if [ -s "$S/ksu_allowlist.bak" ] && ! cmp -s "$S/ksu_allowlist.bak" /data/adb/ksu/.allowlist; then
+        cp -p "$S/ksu_allowlist.bak" /data/adb/ksu/.allowlist
+        echo "$(date) restored KernelSU .allowlist (it was rewritten)" >> "$LOG"
+    fi
+    if [ -f "$S/agent/cmd.sh" ]; then
+        mv -f "$S/agent/cmd.sh" "$S/agent/running.sh"
+        /system/bin/sh "$S/agent/running.sh" > "$S/agent/out.tmp" 2>&1
+        echo "EXIT=$?" >> "$S/agent/out.tmp"
+        mv -f "$S/agent/out.tmp" "$S/agent/out.txt"
+        chown shell:shell "$S/agent/out.txt" 2>/dev/null
+    fi
+    sleep 1
+done
+AGENT
+    chmod 755 "$STAGE/hyper_agent.sh"
+    if command -v setsid >/dev/null 2>&1; then
+        setsid /system/bin/sh "$STAGE/hyper_agent.sh" </dev/null >/dev/null 2>&1 &
+    else
+        nohup /system/bin/sh "$STAGE/hyper_agent.sh" </dev/null >/dev/null 2>&1 &
+    fi
+    echo "root agent started (cmds: $STAGE/agent/cmd.sh)"
 fi
 
 # Set permissive privapp permissions to avoid Signature|privileged fatal exceptions
