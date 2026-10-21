@@ -3,7 +3,7 @@ BB=$(which busybox 2>/dev/null || echo "/data/adb/ksu/bin/busybox")
 [ -x "$BB" ] || BB=$(find /data/adb /system /data -name busybox 2>/dev/null | head -n 1)
 
 echo "[Pivoted Root] Preparing pivot..."
-cd /data/local/tmp/lineage_stage/rootfs
+cd /data/local/tmp/hyper_stage/rootfs
 $BB mount --make-rprivate /
 if ! $BB pivot_root . postinstall; then
     echo "[Pivoted Root] Fallback: bind mounting rootfs onto itself..."
@@ -52,7 +52,7 @@ su -c id || echo "su check non-fatal"
 # (UI sound-effect decode-hang fix lives in master_prepare.sh, where it masks
 # the UI-sounds dirs on $ROOTFS before the pivot so zygote's children inherit it.)
 
-echo "[Pivoted Root] Starting LineageOS SurfaceFlinger..."
+echo "[Pivoted Root] Starting HyperOS SurfaceFlinger..."
 # sf.log used to grow without bound: the guest's RenderEngine dumps LLVM IR for
 # every shader it compiles ("Global Value @fullLiteral...") and got to 300+ MB in
 # ~3 minutes, filling /data. SurfaceFlinger's real diagnostics go through logcat,
@@ -62,23 +62,23 @@ SF_PID=$!
 echo "[Pivoted Root] SurfaceFlinger PID: $SF_PID"
 sleep 2
 
-echo "[Pivoted Root] Starting LineageOS BootAnimation..."
+echo "[Pivoted Root] Starting HyperOS BootAnimation..."
 setprop service.bootanim.exit 0
 /system/bin/bootanimation > /data/anim.log 2>&1 &
 ANIM_PID=$!
 echo "[Pivoted Root] BootAnimation PID: $ANIM_PID"
 sleep 1
 
-echo "[Pivoted Root] Starting LineageOS Vold..."
+echo "[Pivoted Root] Starting HyperOS Vold..."
 /system/bin/vold --blkid_context=u:r:blkid:s0 --blkid_untrusted_context=u:r:blkid_untrusted:s0 --fsck_context=u:r:fsck:s0 --fsck_untrusted_context=u:r:fsck_untrusted:s0 > /data/vold.log 2>&1 &
 VOLD_PID=$!
 echo "[Pivoted Root] Vold PID: $VOLD_PID"
 sleep 1
 
-# Wifi. switch_to_lineage.sh stops the host wificond; the guest's own registers
+# Wifi. switch_to_hyperos.sh stops the host wificond; the guest's own registers
 # IWificond before WifiService initialises, and drives Samsung's wifi HAL (which
 # is still registered by host init) with matching AIDL.
-echo "[Pivoted Root] Starting LineageOS wificond..."
+echo "[Pivoted Root] Starting HyperOS wificond..."
 /system/bin/wificond > /data/wificond.log 2>&1 &
 WIFICOND_PID=$!
 echo "[Pivoted Root] wificond PID: $WIFICOND_PID"
@@ -128,7 +128,7 @@ echo "[Pivoted Root] App storage sweeper started..."
 # This MUST precede zygote: MediaCodecList::getInstance() caches the first list
 # it sees, so no guest process may query media.player before ours is registered.
 if [ -x /system/bin/mediaserver ]; then
-    echo "[Pivoted Root] Starting LineageOS mediaserver (guest-matching codec list)..."
+    echo "[Pivoted Root] Starting HyperOS mediaserver (guest-matching codec list)..."
     /system/bin/mediaserver > /data/mediaserver.log 2>&1 &
     MEDIA_PID=$!
     echo "[Pivoted Root] mediaserver PID: $MEDIA_PID"
@@ -152,5 +152,5 @@ fi
 echo "[Pivoted Root] Cleaning stale sockets..."
 rm -f /dev/socket/zygote /dev/socket/usap_pool_primary 2>/dev/null || true
 
-echo "[Pivoted Root] Launching LineageOS Zygote & SystemServer via zygote_exec..."
+echo "[Pivoted Root] Launching HyperOS Zygote & SystemServer via zygote_exec..."
 exec /data/zygote_exec

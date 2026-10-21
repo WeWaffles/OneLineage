@@ -1,5 +1,5 @@
 #!/system/bin/sh
-STAGE="/data/local/tmp/lineage_stage"
+STAGE="/data/local/tmp/hyper_stage"
 ROOTFS="$STAGE/rootfs"
 BB=$(which busybox 2>/dev/null || echo "/data/adb/ksu/bin/busybox")
 [ -x "$BB" ] || BB=$(find /data/adb /system /data -name busybox 2>/dev/null | head -n 1)
@@ -186,8 +186,9 @@ for pkg in com.android.providers.settings \
            com.android.providers.downloads \
            com.android.providers.contacts \
            com.android.providers.calendar \
-           org.lineageos.lineagesettings \
-           com.wewaffles.onelineage; do
+           com.miui.home \
+           com.miui.securitycenter \
+           com.wewaffles.onehyper; do
     mkdir -p "$STAGE/data/user_de/0/$pkg/databases" \
              "$STAGE/data/user_de/0/$pkg/shared_prefs" \
              "$STAGE/data/user_de/0/$pkg/files/datastore/education" \
@@ -293,7 +294,7 @@ echo "=== 5e. Writing per-package data-dir helper ==="
 # guest tree, and the guest zygote refuses to fork them:
 #   Failed to mount /data_mirror/data_de/null/0/<pkg> to /data/user_de/0/<pkg>
 # This helper recreates the dirs for every package the guest knows about, with
-# the uid PMS reports. switch_to_lineage.sh runs it once the container is up.
+# the uid PMS reports. switch_to_hyperos.sh runs it once the container is up.
 mkdir -p "$STAGE/data/local/tmp" 2>/dev/null || true
 cat > "$STAGE/data/local/tmp/fix_app_dirs.sh" <<'FIXAPPDIRS'
 #!/system/bin/sh

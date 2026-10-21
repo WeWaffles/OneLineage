@@ -1,4 +1,4 @@
-package com.wewaffles.onelineage;
+package com.wewaffles.onehyper;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -27,8 +27,7 @@ import java.util.concurrent.Executors;
 public class MainActivity extends Activity {
 
     public enum Flavor {
-        VANILLA,
-        GAPPS
+        GLOBAL
     }
 
     private TextView tvRootStatus;
@@ -57,15 +56,18 @@ public class MainActivity extends Activity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private boolean isRootGranted = false;
     private String suBinary = "su";
-    private Flavor selectedFlavor = Flavor.VANILLA;
+    private Flavor selectedFlavor = Flavor.GLOBAL;
 
-    private static final String STAGE_DIR = "/data/local/tmp/lineage_stage";
+    private static final String STAGE_DIR = "/data/local/tmp/hyper_stage";
     private static final String SYSTEM_RAW = STAGE_DIR + "/system.raw";
 
-    private static final String URL_VANILLA = "https://downloads.sourceforge.net/project/misterztr-gsi/LineageOS/Android%2016/LineageOS-23.2-20260524-VANILLA-EXT4-GSI.7z?use_mirror=autoselect";
-    private static final String URL_GAPPS = "https://downloads.sourceforge.net/project/misterztr-gsi/LineageOS/Android%2016/LineageOS-23.2-20260524-GAPPS-EXT4-GSI.7z?use_mirror=autoselect";
-    private static final long ESTIMATED_VANILLA_BYTES = 922022276L;
-    private static final long ESTIMATED_GAPPS_BYTES = 1167859370L;
+    // HyperOS 3 Global (MIXM region), Android 16, ported by Mystic GSI. Zip holds a
+    // single raw (non-sparse) ext4 system.img, so the 7zz -> system.raw path is unchanged.
+    private static final String URL_GLOBAL = "https://downloads.sourceforge.net/project/mystic-gsi-updates/HyperOS/Hyperos-goya-16-OS3.0.5.0.WOEMIXM-AB-20251207-MysticGSI.zip?use_mirror=autoselect";
+    private static final long ESTIMATED_GLOBAL_BYTES = 3762078520L;
+    // Archive (~3.8 GB, app cache) and extracted system.img (~7.6 GB) coexist until
+    // 7zz finishes, plus headroom for the staged /data.
+    private static final long REQUIRED_FREE_BYTES = 13L * 1024 * 1024 * 1024;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -113,29 +115,21 @@ public class MainActivity extends Activity {
     }
 
     private void setupFlavorSelection() {
-        View.OnClickListener clickVanilla = v -> selectFlavor(Flavor.VANILLA);
-        View.OnClickListener clickGapps = v -> selectFlavor(Flavor.GAPPS);
+        // Only one Android 16 Global HyperOS GSI exists; the second card is unused.
+        cardFlavorVanilla.setOnClickListener(v -> selectFlavor(Flavor.GLOBAL));
+        cardFlavorGapps.setVisibility(View.GONE);
 
-        cardFlavorVanilla.setOnClickListener(clickVanilla);
-        cardFlavorGapps.setOnClickListener(clickGapps);
-
-        selectFlavor(Flavor.GAPPS);
+        selectFlavor(Flavor.GLOBAL);
     }
 
     private void selectFlavor(Flavor flavor) {
         selectedFlavor = flavor;
-        rbVanilla.setChecked(flavor == Flavor.VANILLA);
-        rbGapps.setChecked(flavor == Flavor.GAPPS);
-
-        cardFlavorVanilla.setBackgroundResource(flavor == Flavor.VANILLA ? R.drawable.radio_item_selected : R.drawable.radio_item_unselected);
-        cardFlavorGapps.setBackgroundResource(flavor == Flavor.GAPPS ? R.drawable.radio_item_selected : R.drawable.radio_item_unselected);
+        rbVanilla.setChecked(true);
+        cardFlavorVanilla.setBackgroundResource(R.drawable.radio_item_selected);
 
         switch (flavor) {
-            case VANILLA:
-                tvDownloadDesc.setText("Vanilla: The lightweight option");
-                break;
-            case GAPPS:
-                tvDownloadDesc.setText("MindTheGapps: LineageOS 23.2 + Google Play Store & Services.");
+            case GLOBAL:
+                tvDownloadDesc.setText("HyperOS 3 Global (OS3.0.5.0.WOEMIXM, Android 16) with Google Play. ~3.8 GB download, needs ~13 GB free.");
                 break;
         }
     }
@@ -224,17 +218,17 @@ public class MainActivity extends Activity {
 
             // Check active userspace
             try {
-                Process pOs = Runtime.getRuntime().exec(new String[]{suBinary, "-c", "getprop ro.lineage.version"});
+                Process pOs = Runtime.getRuntime().exec(new String[]{suBinary, "-c", "getprop ro.mi.os.version.name"});
                 BufferedReader osReader = new BufferedReader(new InputStreamReader(pOs.getInputStream()));
                 String osVer = osReader.readLine();
                 pOs.waitFor();
 
                 mainHandler.post(() -> {
                     if (osVer != null && !osVer.trim().isEmpty()) {
-                        tvOsStatus.setText("Current Userspace: LineageOS " + osVer.trim());
+                        tvOsStatus.setText("Current Userspace: HyperOS " + osVer.trim());
                         tvOsStatus.setTextColor(Color.parseColor("#78D9EC"));
                         if (tvHeaderSubtitle != null) {
-                            tvHeaderSubtitle.setText("Dual Userspace Switcher • LineageOS");
+                            tvHeaderSubtitle.setText("Dual Userspace Switcher • HyperOS");
                         }
                     } else {
                         tvOsStatus.setText("Current Userspace: Samsung One UI (Stock)");
@@ -284,10 +278,9 @@ public class MainActivity extends Activity {
     private void extractAssets() {
         executor.execute(() -> {
             String[] assets = {
-                "switch_to_lineage.sh", "return_to_oneui.sh",
+                "switch_to_hyperos.sh", "return_to_oneui.sh",
                 "master_prepare.sh", "master_inner.sh",
                 "zygote_exec", "clean_apex_info_list.xml",
-                "services_patched.jar", "framework_patched.jar",
                 "7zz", "PermissionController_patched.apk"
             };
             File filesDir = getFilesDir();
@@ -323,13 +316,13 @@ public class MainActivity extends Activity {
                     }).waitFor();
                 } catch (Exception ignored) {}
             }
-            appendLog("OneLineage engine assets unpacked & verified.");
+            appendLog("OneHyper engine assets unpacked & verified.");
         });
     }
 
     private void downloadLineage() {
         if (!isRootGranted) {
-            appendLog("ERROR: Root privilege required to set up LineageOS!");
+            appendLog("ERROR: Root privilege required to set up HyperOS!");
             return;
         }
         startNetworkDownload(selectedFlavor);
@@ -444,8 +437,12 @@ public class MainActivity extends Activity {
                 appendLog("[SETUP] Wiping existing userdata for a fresh OOBE...");
                 runRootCmdDrained(wipeUserDataCmd());
 
-                String downloadUrl = (flavor == Flavor.GAPPS) ? URL_GAPPS : URL_VANILLA;
-                final long totalBytes = (flavor == Flavor.GAPPS) ? ESTIMATED_GAPPS_BYTES : ESTIMATED_VANILLA_BYTES;
+                long freeBytes = new android.os.StatFs("/data").getAvailableBytes();
+                if (freeBytes < REQUIRED_FREE_BYTES) {
+                    throw new Exception("Not enough free space on /data: " + (freeBytes >> 30) + " GB free, ~" + (REQUIRED_FREE_BYTES >> 30) + " GB needed");
+                }
+                String downloadUrl = URL_GLOBAL;
+                final long totalBytes = ESTIMATED_GLOBAL_BYTES;
                 // Download into the app's own cache dir, NOT STAGE_DIR directly: this
                 // process writes as the unprivileged app, and /data/local/tmp paths
                 // created by root are labeled shell_data_file, which SELinux blocks
@@ -453,7 +450,7 @@ public class MainActivity extends Activity {
                 // actual cause of "lineage_dl.7z: open failed: EACCES"). su (used below
                 // for extraction) can read the app's cache dir fine, same as
                 // extractAssets() already does for the other staged files.
-                final File targetArchive = new File(getCacheDir(), "lineage_dl.7z");
+                final File targetArchive = new File(getCacheDir(), "hyper_dl.zip");
 
                 appendLog("[NETWORK DOWNLOAD] Fetching " + flavor.name() + " edition directly via native HTTP engine...");
                 appendLog("URL: " + downloadUrl);
@@ -482,7 +479,7 @@ public class MainActivity extends Activity {
 
                 mainHandler.post(() -> {
                     pbDownload.setVisibility(View.GONE);
-                    tvDownloadProgress.setText("LineageOS 23.2 (" + flavor.name() + ") installed successfully!");
+                    tvDownloadProgress.setText("HyperOS 3 Global installed successfully!");
                     btnDownloadLineage.setEnabled(true);
                 });
                 setLogStatus("Ready");
@@ -530,8 +527,8 @@ public class MainActivity extends Activity {
 
     private void confirmDeleteLineage() {
         new AlertDialog.Builder(this)
-            .setTitle("Delete LineageOS Files?")
-            .setMessage("This will cleanly unmount the container, detach loop devices, and remove system.raw to free up ~3.5GB. You can reinstall anytime.")
+            .setTitle("Delete HyperOS Files?")
+            .setMessage("This will cleanly unmount the container, detach loop devices, and remove system.raw to free up ~7.6GB. You can reinstall anytime.")
             .setPositiveButton("Delete", (dialog, which) -> deleteLineage())
             .setNegativeButton("Cancel", null)
             .show();
@@ -553,7 +550,7 @@ public class MainActivity extends Activity {
                     "  pkill -9 -f 'ui_activator' 2>/dev/null || true; " +
                     "  pkill -9 -f 'zygote_exec' 2>/dev/null || true; " +
                     "  pkill -9 -f 'system_server' 2>/dev/null || true; " +
-                    "  pkill -9 -f org.lineageos 2>/dev/null || true; " +
+                    "  pkill -9 -f 'com.miui.|com.xiaomi.' 2>/dev/null || true; " +
                     "  pkill -9 -x zygote64 2>/dev/null || true; " +
                     "  kill -9 $(pidof surfaceflinger) 2>/dev/null || true; " +
                     "  kill -9 $(pidof bootanimation) 2>/dev/null || true; " +
@@ -588,7 +585,7 @@ public class MainActivity extends Activity {
                     appendLog("✗ system.raw could not be fully removed (a loop device is still holding it busy). Try again, or reboot and retry.");
                     setLogStatus("Error");
                 } else {
-                    appendLog("✓ LineageOS files deleted cleanly. All loop mounts detached!");
+                    appendLog("✓ HyperOS files deleted cleanly. All loop mounts detached!");
                     setLogStatus("Idle");
                 }
                 checkImageStatus();
@@ -601,10 +598,10 @@ public class MainActivity extends Activity {
 
     private void bootLineage() {
         if (!isRootGranted) {
-            appendLog("ERROR: Root privilege required to boot LineageOS!");
+            appendLog("ERROR: Root privilege required to boot HyperOS!");
             return;
         }
-        appendLog("\n[START] Preparing LineageOS 23.2 takeover...");
+        appendLog("\n[START] Preparing HyperOS 3 takeover...");
         setLogStatus("Switching…");
         executor.execute(() -> {
             try {
@@ -616,8 +613,8 @@ public class MainActivity extends Activity {
                                  "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/7zz";
                 Runtime.getRuntime().exec(new String[]{suBinary, "-c", syncCmd}).waitFor();
 
-                String stageScript = STAGE_DIR + "/switch_to_lineage.sh";
-                String cmd = "stageScript=" + STAGE_DIR + "/switch_to_lineage.sh; " +
+                String stageScript = STAGE_DIR + "/switch_to_hyperos.sh";
+                String cmd = "stageScript=" + STAGE_DIR + "/switch_to_hyperos.sh; " +
                              "chmod 755 $stageScript; " +
                              "BB=$(which busybox 2>/dev/null || echo /data/adb/ksu/bin/busybox); " +
                              "[ -x \"$BB\" ] || BB=$(find /data/adb /system /data -name busybox 2>/dev/null | head -n 1); " +
@@ -670,9 +667,9 @@ public class MainActivity extends Activity {
             setLogStatus("Backing up…");
             appendLog("\nBacking up One UI Home Screen database...");
             try {
-                String cmd = "mkdir -p /data/local/tmp/lineage_backups && " +
-                             "cp -a /data/user/0/com.sec.android.app.launcher/databases/* /data/local/tmp/lineage_backups/ 2>/dev/null && " +
-                             "ls -la /data/local/tmp/lineage_backups/";
+                String cmd = "mkdir -p /data/local/tmp/hyper_backups && " +
+                             "cp -a /data/user/0/com.sec.android.app.launcher/databases/* /data/local/tmp/hyper_backups/ 2>/dev/null && " +
+                             "ls -la /data/local/tmp/hyper_backups/";
                 Process p = Runtime.getRuntime().exec(new String[]{suBinary, "-c", cmd});
                 BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
                 String line;
@@ -694,11 +691,11 @@ public class MainActivity extends Activity {
             setLogStatus("Restoring…");
             appendLog("\nRestoring One UI Home Screen layout...");
             try {
-                String cmd = "if [ -d /data/local/tmp/lineage_backups ]; then " +
+                String cmd = "if [ -d /data/local/tmp/hyper_backups ]; then " +
                              "LAUNCHER_DATA=/data/user/0/com.sec.android.app.launcher; " +
                              "L_UID=$(stat -c %u $LAUNCHER_DATA 2>/dev/null || echo 10160); " +
                              "L_GID=$(stat -c %g $LAUNCHER_DATA 2>/dev/null || echo 10160); " +
-                             "cp -a /data/local/tmp/lineage_backups/* $LAUNCHER_DATA/databases/ && " +
+                             "cp -a /data/local/tmp/hyper_backups/* $LAUNCHER_DATA/databases/ && " +
                              "chown -R ${L_UID}:${L_GID} $LAUNCHER_DATA/databases && " +
                              "chmod 771 $LAUNCHER_DATA/databases && " +
                              "chmod 660 $LAUNCHER_DATA/databases/* && " +

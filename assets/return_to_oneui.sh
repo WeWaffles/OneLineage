@@ -1,18 +1,18 @@
 #!/system/bin/sh
 # Return to One UI / Safe State Restoration
-BACKUP_DIR="/data/local/tmp/lineage_backups"
+BACKUP_DIR="/data/local/tmp/hyper_backups"
 
 echo "=== [1/5] Terminating Container Supervision & Zygote ==="
 pkill -9 -f "ctl.stop zygote" 2>/dev/null || true
 pkill -9 -f "kill -STOP" 2>/dev/null || true
 pkill -9 -f "ui_activator" 2>/dev/null || true
 pkill -9 -f "zygote_exec" 2>/dev/null || true
-# Stop the adb watchdog started by switch_to_lineage.sh before One UI's own
+# Stop the adb watchdog started by switch_to_hyperos.sh before One UI's own
 # system_server comes back, so it cannot fight init over sys.usb.config.
 pkill -9 -f "adb_watchdog.sh" 2>/dev/null || true
 pkill -9 -f "ims_watchdog.sh" 2>/dev/null || true
 pkill -9 -f "system_server" 2>/dev/null || true
-pkill -9 -f org.lineageos 2>/dev/null || true
+pkill -9 -f 'com\.miui\.|com\.xiaomi\.' 2>/dev/null || true
 pkill -9 -x zygote64 2>/dev/null || true
 kill -9 $(pidof surfaceflinger) 2>/dev/null || true
 
@@ -38,10 +38,10 @@ if [ -d "$BACKUP_DIR" ] && [ -d "$LAUNCHER_DATA/databases" ]; then
 fi
 
 echo "=== [3/5] Unmounting Container Overlays ==="
-umount -l /data/local/tmp/lineage_stage/rootfs/* 2>/dev/null || true
-umount -l /data/local/tmp/lineage_stage/rootfs/apex/* 2>/dev/null || true
-while mount | grep -q "/data/local/tmp/lineage_stage/rootfs"; do
-    umount -l /data/local/tmp/lineage_stage/rootfs 2>/dev/null || true
+umount -l /data/local/tmp/hyper_stage/rootfs/* 2>/dev/null || true
+umount -l /data/local/tmp/hyper_stage/rootfs/apex/* 2>/dev/null || true
+while mount | grep -q "/data/local/tmp/hyper_stage/rootfs"; do
+    umount -l /data/local/tmp/hyper_stage/rootfs 2>/dev/null || true
     sleep 0.1
 done
 BB=$(which busybox 2>/dev/null || echo /data/adb/ksu/bin/busybox)
@@ -62,7 +62,7 @@ setprop ctl.start surfaceflinger
 setprop ctl.start zygote
 setprop ctl.start audioserver
 setprop ctl.start cameraserver
-# switch_to_lineage.sh stops the host media codec stack (its IMediaCodecList AIDL
+# switch_to_hyperos.sh stops the host media codec stack (its IMediaCodecList AIDL
 # hash does not match the GSI's, which spins the guest's MediaCodecList); bring it
 # back for One UI.
 for svc in media media.extractor media.metrics wificond; do
@@ -71,7 +71,7 @@ done
 am force-stop com.sec.android.app.launcher 2>/dev/null || true
 am start -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null || true
 
-# switch_to_lineage.sh drops SELinux to permissive for the takeover; restore it.
+# switch_to_hyperos.sh drops SELinux to permissive for the takeover; restore it.
 setenforce 1 2>/dev/null || true
 echo "SELinux mode: $(getenforce 2>/dev/null || echo unknown)"
 echo "One UI restored successfully."

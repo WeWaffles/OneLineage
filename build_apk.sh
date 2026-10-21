@@ -8,7 +8,7 @@ BUILD_DIR="/Users/waffles/.gemini/antigravity/scratch/LineageSwitcher/build"
 SDK_TOOLS="/Users/waffles/Library/Android/sdk/build-tools/34.0.0"
 PLATFORM_JAR="/Users/waffles/Library/Android/sdk/platforms/android-34/android.jar"
 PROJECT_DIR="/Users/waffles/.gemini/antigravity/scratch/LineageSwitcher"
-OUT_APK="/Users/waffles/Downloads/OneLineage.apk"
+OUT_APK="/Users/waffles/Downloads/OneHyper.apk"
 
 echo "=== 1. Cleaning & preparing build directories ==="
 rm -rf "$BUILD_DIR"
@@ -32,14 +32,14 @@ echo "=== 4. Compiling Java sources ==="
 javac -source 1.8 -target 1.8 \
     -cp "$PLATFORM_JAR" \
     -d "$BUILD_DIR/classes" \
-    src/com/wewaffles/onelineage/MainActivity.java \
-    "$BUILD_DIR/gen/com/wewaffles/onelineage/R.java"
+    src/com/wewaffles/onehyper/MainActivity.java \
+    "$BUILD_DIR/gen/com/wewaffles/onehyper/R.java"
 
 echo "=== 5. Generating Dalvik Executable (classes.dex) with d8 ==="
 "$SDK_TOOLS/d8" \
     --lib "$PLATFORM_JAR" \
     --output "$BUILD_DIR/dex" \
-    "$BUILD_DIR/classes/com/wewaffles/onelineage"/*.class
+    "$BUILD_DIR/classes/com/wewaffles/onehyper"/*.class
 
 echo "=== 6. Packaging classes.dex into APK ==="
 cd "$BUILD_DIR/dex"
@@ -60,7 +60,7 @@ if [ ! -f "$KEYSTORE" ]; then
         -keyalg RSA \
         -keysize 2048 \
         -validity 10000 \
-        -dname "CN=OneLineage,O=WeWaffles,C=US"
+        -dname "CN=OneHyper,O=WeWaffles,C=US"
 fi
 
 "$SDK_TOOLS/apksigner" sign \

@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # OneLineage Userspace Takeover Orchestrator
-STAGE="/data/local/tmp/lineage_stage"
+STAGE="/data/local/tmp/hyper_stage"
 BB=$(which busybox 2>/dev/null || echo "/data/adb/ksu/bin/busybox")
 [ -x "$BB" ] || BB=$(find /data/adb /system /data -name busybox 2>/dev/null | head -n 1)
 RP=$(which resetprop 2>/dev/null || echo "/data/adb/ksu/bin/resetprop")
@@ -18,9 +18,9 @@ set_prop() {
     fi
 }
 
-BACKUP_DIR="/data/local/tmp/lineage_backups"
+BACKUP_DIR="/data/local/tmp/hyper_backups"
 
-echo "=== LINEAGEOS 23.2 TAKEOVER STARTING ==="
+echo "=== HYPEROS 3 TAKEOVER STARTING ==="
 
 # Put SELinux in permissive mode for the duration of the takeover. The guest
 # userspace is a foreign, unlabelled-for-this-policy userspace: its
@@ -206,14 +206,14 @@ chmod 666 /dev/socket/dnsproxyd 2>/dev/null || true
 # --- VERIFY STAGING ENVIRONMENT ---
 echo "=== [4/6] Verifying Staging Environment ==="
 if [ ! -f "$STAGE/system.raw" ]; then
-    echo "ERROR: LineageOS system image ($STAGE/system.raw) not found!"
-    echo "Please tap 'Download LineageOS' in the app first."
+    echo "ERROR: HyperOS system image ($STAGE/system.raw) not found!"
+    echo "Please tap 'Download & Install' in the app first."
     exit 1
 fi
 
 # Ensure all scripts and engine binaries exist in $STAGE
 mkdir -p "$STAGE/data"
-APP_FILES="/data/user/0/com.wewaffles.onelineage/files"
+APP_FILES="/data/user/0/com.wewaffles.onehyper/files"
 if [ -d "$APP_FILES" ]; then
     cp -f "$APP_FILES"/* "$STAGE/" 2>/dev/null || true
 fi
@@ -229,7 +229,7 @@ if [ $PREP_RET -ne 0 ]; then
 fi
 
 # --- STOP HOST DAEMONS & LAUNCH CONTAINER ---
-echo "=== [6/6] Launching LineageOS Takeover Daemon ==="
+echo "=== [6/6] Launching HyperOS Takeover Daemon ==="
 pkill -f "while true; do [ \"\$(getprop init.svc.zygote)\"" 2>/dev/null || true
 pkill -f "while true; do for p in \\\$(pidof audioserver cameraserver)" 2>/dev/null || true
 setprop ctl.stop zygote

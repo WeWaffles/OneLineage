@@ -23,7 +23,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="OneLineage"
+                android:text="OneHyper"
                 android:textColor="@color/m3_text_primary"
                 android:textSize="26sp"
                 android:fontFamily="sans-serif-medium"
@@ -79,7 +79,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:text="LineageOS Image: Checking…"
+                android:text="HyperOS Image: Checking…"
                 android:textColor="@color/m3_text_secondary"
                 android:textSize="13sp" />
         </LinearLayout>
@@ -139,7 +139,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="LineageOS 23.2 Image"
+                android:text="HyperOS 3 Global Image"
                 android:textColor="@color/m3_primary"
                 android:textSize="13sp"
                 android:fontFamily="sans-serif-medium" />
@@ -149,7 +149,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="Select variant to download from official releases:"
+                android:text="Mystic GSI port of Xiaomi HyperOS:"
                 android:textColor="@color/m3_text_secondary"
                 android:textSize="13sp" />
 
@@ -189,7 +189,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Vanilla (Clean LineageOS)"
+                            android:text="HyperOS 3 Global (Android 16)"
                             android:textColor="@color/m3_text_primary"
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
@@ -199,7 +199,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
-                            android:text="The lightweight option"
+                            android:text="OS3.0.5.0.WOEMIXM · Google Play included"
                             android:textColor="@color/m3_text_secondary"
                             android:textSize="12sp" />
                     </LinearLayout>
@@ -414,7 +414,7 @@
                 android:fontFamily="monospace"
                 android:padding="12dp"
                 android:scrollbars="vertical"
-                android:text="OneLineage initialized.\n"
+                android:text="OneHyper initialized.\n"
                 android:textColor="@color/m3_log_text"
                 android:textSize="11sp" />
         </LinearLayout>

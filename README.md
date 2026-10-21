@@ -1,18 +1,45 @@
-# OneLineage
+# OneHyper
 
-Hot-switch between stock **One UI** and a **LineageOS 23.2 (Android 16) GSI** on a rooted Samsung phone, with no reflashing and no second partition. OneLineage stages the GSI under `/data/local/tmp`, pivots into it as a container with its own zygote and system_server, and can hand the screen back to One UI.
+A fork of [OneLineage](https://github.com/WeWaffles/OneLineage) that hot-switches a rooted Samsung phone between stock **One UI** and a **Xiaomi HyperOS 3 Global (Android 16) GSI** instead of LineageOS. It uses the same container approach: the GSI is staged under `/data/local/tmp/hyper_stage`, pivoted into with its own zygote and system_server, and the screen can be handed back to One UI. No reflashing, no second partition.
 
-If something isn't working and you have a fix feel free to make a pr!
+OneHyper uses its own package name (`com.wewaffles.onehyper`) and stage directory, so it can be installed alongside OneLineage.
 
 > ## Disclaimer
-> **This has been tested on only a handful of devices, and it seems if you want to install it without making modifications, it has to be on Android 16**
-> It may not work on other Samsung models, other One UI versions, or other devices at all. It is experimental, it replaces core parts of a running system, and it can crash, hang or soft-brick your phone, fill `/data`, or break radio/SMS. **Back up everything first. Use at your own risk.**
-> Also, I did use AI a fair bit in this project, it would have taken a LOT longer without it.
+> **Experimental and not yet boot-tested.** The orchestration is inherited from OneLineage, which was tuned against the LineageOS 23.2 GSI. HyperOS is a heavily modified ROM (MIUI framework, Xiaomi services) and may need more bring-up work before it reaches the home screen. See *Status* below.
+> It may not work on your Samsung model or One UI version at all. It replaces core parts of a running system, and it can crash, hang or soft-brick your phone, fill `/data`, or break radio/SMS. **Back up everything first. Use at your own risk.**
 
 ## Requirements
-- A rooted Samsung phone (the tested one is an S26 Ultra on One UI 8.5)
-- Enough free space on `/data` for the extracted GSI
-- Internet access for the GSI download (LineageOS 23.2 GSI, EXT4, VANILLA or GAPPS builds from SourceForge)
+- A rooted Samsung phone on **Android 16** (One UI 8.x). The guest must match the host's Android version.
+- **~13 GB free on `/data`.** The download is about 3.8 GB and the extracted `system.img` is 7.6 GB; both exist at once during extraction. The app checks this before downloading.
+- Internet access for the GSI download
+
+## The image
+| | |
+| --- | --- |
+| Build | `Hyperos-goya-16-OS3.0.5.0.WOEMIXM-AB-20251207-MysticGSI.zip` |
+| Source | [Mystic GSI on SourceForge](https://sourceforge.net/projects/mystic-gsi-updates/files/HyperOS/) (unofficial port, not from Xiaomi) |
+| Region | `MIXM` = Global (`CNXM` would be China) |
+| Contents | one raw, non-sparse **ext4** `system.img`. Checked over HTTP range requests: ext4 magic `0x53EF` at offset 1080, 7,620,681,728 bytes. The existing `7zz` → `system.raw` → `losetup` + `mount -t ext4` path works unchanged. |
+
+At the time of the fork this was the only Android 16 Global HyperOS GSI that Mystic GSI published. The other Global and EEA builds are Android 15.
+
+## Differences from OneLineage
+- **Download:** one HyperOS 3 Global flavour instead of the LineageOS Vanilla/GAPPS choice. The second flavour card is hidden. Google Play ships in the ROM, so there is no GAPPS variant.
+- **No `framework_patched.jar` / `services_patched.jar`.** Those were patched copies of *LineageOS's* framework. Bind-mounting them over HyperOS's framework would bootloop it, so they were removed. `master_prepare.sh` already skips the bind when the files are absent. If HyperOS needs equivalent fixes, they must be re-made against HyperOS's own `framework.jar`/`services.jar`.
+- **Kept:** `PermissionController_patched.apk`. It patches the *host's* permission APEX, which is bound into the container, so it is not tied to the guest ROM.
+- **Pre-created data dirs:** `com.miui.home` and `com.miui.securitycenter` replace `org.lineageos.lineagesettings`.
+- **Detection:** the app checks `ro.mi.os.version.name` instead of `ro.lineage.version`. Cleanup kills `com.miui.*`/`com.xiaomi.*` instead of `org.lineageos.*`.
+- **Renames:** `switch_to_lineage.sh` → `switch_to_hyperos.sh`; `lineage_stage`/`lineage_backups` → `hyper_stage`/`hyper_backups`.
+- **Build:** adds `build_apk_windows.sh` for Git Bash on Windows. It uses JDK 21 and SDK build-tools/platform 36.
+- Internal Java identifiers (`btnBootLineage` and the like) are unchanged on purpose, so upstream OneLineage fixes merge cleanly.
+
+## Status
+- APK builds and packages correctly.
+- **Not yet boot-tested on a device.** Likely HyperOS-specific trouble spots, in no particular order:
+  - Xiaomi services that expect Xiaomi `ro.product.*`/`ro.miui.*` properties or vendor HALs.
+  - MIUI's provisioning/OOBE flow.
+  - The MIUI launcher (`com.miui.home`).
+  - Whatever Lineage-specific crash `services_patched.jar`/`framework_patched.jar` worked around.
 
 ## What's in here
 | Path | What it is |
@@ -20,15 +47,16 @@ If something isn't working and you have a fix feel free to make a pr!
 | `src/`, `res/`, `AndroidManifest.xml` | The Android app (`com.wewaffles.onelineage`) |
 | `assets/master_prepare.sh` | Stages the rootfs, binds the patched files, fixes labels/ownership |
 | `assets/master_inner.sh` | Runs inside the container, starts the guest zygote |
-| `assets/switch_to_lineage.sh` / `return_to_oneui.sh` | Switch in and back out |
+| `assets/switch_to_hyperos.sh` / `return_to_oneui.sh` | Switch in and back out |
 | `assets/zygote_exec` | Static aarch64 launcher for the guest zygote |
-| `build_apk.sh` | Builds and signs the APK |
+| `build_apk.sh` / `build_apk_windows.sh` | Builds and signs the APK (macOS / Windows Git Bash) |
 
-## Patches
+## Patches (inherited from OneLineage)
+
+Everything below was found and fixed against the LineageOS GSI. The host-side fixes should still apply; guest-side ones may not.
 
 ### Patched system files (bind-mounted over the GSI)
-- `services_patched.jar` over `system/framework/services.jar`
-- `framework_patched.jar` over `system/framework/framework.jar`
+- *(OneLineage only: `services_patched.jar` / `framework_patched.jar`; removed in this fork, see above)*
 - `PermissionController_patched.apk`: removes the `android.permission.RANGING` reference so runtime-permission dialogs stop crashing (Samsung's PermissionController needs a permission the LineageOS 23.2 platform doesn't define)
 - Optional bind-mounts when present: `framework-res_patched.apk`, `libaudio_aidl_conversion_common_cpp_patched.so`, `libaudioclient_aidl_conversion_patched.so`
 
@@ -64,7 +92,7 @@ The path that *does* work in the guest, because mobile data already does, is **V
 - Never kill the host `netd` while Lineage is running.
 
 ## Building
-Edit the paths at the top of `build_apk.sh` (JDK 17, Android SDK build-tools 34, android-34 platform), provide your own signing keystore, then run `./build_apk.sh`.
+Windows (Git Bash): `bash build_apk_windows.sh` → `build/OneHyper.apk`. macOS: edit the paths at the top of `build_apk.sh`, then run it.
 
 ## Credits
-LineageOS GSI builds by MisterZtr (SourceForge). LineageOS and Android are trademarks of their respective owners. Not affiliated with Samsung, Google or LineageOS.
+Forked from OneLineage by WeWaffles. HyperOS GSI ports by Mystic GSI (SourceForge). HyperOS and MIUI are trademarks of Xiaomi; Android is a trademark of Google. Not affiliated with Samsung, Xiaomi, Google or LineageOS.

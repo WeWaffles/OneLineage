@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">OneLineage</string>
-    <string name="title_dashboard">OneLineage</string>
+    <string name="app_name">OneHyper</string>
+    <string name="title_dashboard">OneHyper</string>
     <string name="desc_dashboard">Dual userspace switcher for Galaxy S26 Ultra</string>
     
     <string name="status_root_checking">Checking root permissions…</string>
     <string name="status_root_granted">KernelSU Root Active</string>
     <string name="status_root_denied">Root Access Required</string>
     
-    <string name="btn_boot_lineage">Switch to LineageOS</string>
+    <string name="btn_boot_lineage">Switch to HyperOS</string>
     <string name="btn_return_oneui">Return to One UI</string>
     <string name="btn_download_lineage">Download &amp; Install</string>
-    <string name="btn_delete_lineage">Delete LineageOS Files</string>
+    <string name="btn_delete_lineage">Delete HyperOS Files</string>
     <string name="btn_backup_launcher">Backup Layout</string>
     <string name="btn_restore_launcher">Restore Layout</string>
 </resources>
