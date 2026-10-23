@@ -26,7 +26,7 @@ If something isn't working and you have a fix feel free to make a pr!
 | Camera | Working (stand-in binder services for cameraserver, PipeWire camera node) |
 | Flatpak / Flathub, incl. GPU | Working |
 | Screen off/on, suspend | Working (suspend only while unplugged from USB) |
-| Mobile data | In progress: works on the Android side (`m304_dds.sh`); handing it over to Nura is next |
+| Mobile data | Working over IPv6 with the Plan C session (`m306_planC.sh`); IPv4-only sites need 464XLAT, not done yet |
 | SMS, calls | Not yet |
 | Switch-to-Nura app | Not yet; Nura is started from scripts for now |
 
@@ -34,6 +34,7 @@ If something isn't working and you have a fix feel free to make a pr!
 1. Push `stage/` to `/data/local/tmp/nura_stage` and build the Alpine chroot at `nura_stage/rootfs` (`m1_setup.sh`, then `m80_phosh.sh`).
 2. Copy `stage/nura_wpa.conf.example` to `nura_wpa.conf` and fill in your Wi-Fi; `m100_nm_install.sh` imports it into NetworkManager.
 3. Build the helpers (see below), then boot Nura: `adb shell su 0 sh /data/local/tmp/nura_stage/m99_run81.sh`
+   For mobile data, boot with `m306_planC.sh` instead (build `s26_dogsteal` first with `m307_build_dogsteal.sh`). It freezes the Android framework rather than stopping it, so Android's LTE call survives and Nura reuses it.
 4. Back to One UI: `adb shell su 0 sh /data/local/tmp/nura_stage/m77_back.sh`
 
 Quoting through `adb shell su 0 sh -c` breaks easily: push a script and run it instead.
@@ -66,8 +67,10 @@ Quoting through `adb shell su 0 sh -c` breaks easily: push a script and run it i
 - Camera: `s26_fakeam.c` (`m174`, started by `m175_camstack.sh`), `s26_camd.c` (`m179`), `s26_pwcam.c` (`m182`), `s26_camfeed.sh`, `s26_camprobe.c` (`m173`)
 
 **Cellular**
-- `m304_dds.sh`: fixes Android mobile data (sets the default data subscription and restarts the phone process)
-- `m290_planB.sh` / `m291_pivotv2.sh`: let Android hold the data call, then pivot with targeted stops
+- `m306_planC.sh` → `m305_pivotv3.sh`: the data-capable session. Killing zygote kills `com.android.phone`, and Samsung's rild restarts with its client, dropping every data call. So Plan C SIGSTOPs the framework instead (only the composer dies, to free DRM master) and reuses Android's `rmnet_data0`.
+- `s26_dogsteal.c` (`m307`): the frozen system_server still holds `/dev/watchdog`, so `m126_dogpet.sh` pets Samsung's softdog through system_server's own fd (`pidfd_getfd`) instead of panicking
+- `m304_dds.sh`: fixes Android mobile data (default data subscription and SIM slot, then restarts the phone process); `m77_back.sh` re-applies it after a framework restart
+- `m290_planB.sh` / `m291_pivotv2.sh`: the earlier targeted-stop attempt (the call doesn't survive it)
 - `m296_unwedge.sh`: QMI provisioning toggle for the `CARD_IO_ERROR` SIM wedge
 - `m191_qmi_provision.sh`, `m199_build_mm.sh` (+ `s26_mm_*.c/.py` patches), `m194_mm_netport.sh` + `77-s26-modem.rules`, `m195_mm_debug.sh`, `m200_mm_connect.sh`, `muxdump.c`
 
@@ -77,7 +80,9 @@ Quoting through `adb shell su 0 sh -c` breaks easily: push a script and run it i
 ## Known issues
 - Real suspend only works while unplugged from USB, and adb doesn't recover after suspend while plugged in.
 - `vendor.usbudev` crash-loops every ~10 s while Nura runs.
-- No IPv6 route on Wi-Fi.
+- No IPv4 over LTE yet (T-Mobile is IPv6-only; Android's CLAT doesn't survive the freeze).
+- Camera and audio aren't re-verified under Plan C (their Android services may block on the frozen system_server).
+- `m81_phosh_session.sh` (the non-data session) still has no IPv6 route on Wi-Fi; Plan C fixes this with an `ip -6 rule`.
 - The guest user is uid 1000 (same as Android `system`): never `pkill -u user`.
 
 ## Credits

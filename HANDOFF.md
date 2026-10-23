@@ -130,6 +130,29 @@ ModemManager only runs when D-Bus activates it (NetworkManager does). Provisioni
 - Result: `defaultDataSubId=1`, internet DN `fast.t-mobile.com` comes up next to IMS, wifi off → ping6 and
   IPv4 (Android clat) both work. Unblocks Plan B pivot (m290/m291). Needs re-check after reboot.
 
+## Cellular data WORKING IN NURA - 2026-10-23 (Plan C: freeze, don't kill)
+Run: `adb shell su 0 sh /data/local/tmp/nura_stage/m306_planC.sh` (from a booted One UI). Back: m77 as usual.
+Verified: Phosh up, Wi-Fi (NM) connected, HTTPS on Wi-Fi; Wi-Fi disconnected -> HTTPS over LTE (v6) via
+rmnet_data0; Wi-Fi reconnects; m77 returns to One UI without a reboot. 14+ min stable.
+- **Why Plan B died:** stopping zygote kills com.android.phone; Samsung rild + multiclientd restart within
+  ~0.3 s of losing their client and every rmnet_data link is torn down (proven step by step, exp.sh).
+- **m305_pivotv3.sh** (from m291): SIGSTOPs zygotes, all zygote children except com.android.phone /
+  com.sec.imsservice, and surfaceflinger; kills only the composer (DRM master). Frozen pids -> frozen.pids.
+- **Softdog:** the frozen system_server keeps /dev/watchdog open (single opener) but stops petting ->
+  "Software Watchdog Timer expired" panic (2 reboots). **s26_dogsteal.c** (m307 builds it) uses
+  pidfd_getfd to pet through system_server's own fd. m126 checks for a holder BEFORE `exec 3>` (a failed
+  exec redirection exits sh, so the old `|| fallback` never ran). m305 starts m126 right after the freeze.
+- **Wi-Fi:** the live vendor Wi-Fi HAL rfkill-blocks the chip when wificond/supplicant go -> m305 clears
+  rfkill soft, NM `radio wifi on`.
+- **IPv6:** `ip -6 rule add pref 31999 from all lookup main` was missing (v4 only before) -> this is also the
+  old "no IPv6 route on Wi-Fi" item. resolv.conf static (1.1.1.1 + Cloudflare/Google v6), NM dns=none.
+- **DDS:** `multi_sim_data_call_slot` must be 0 (was 1 = empty slot). Survives cold boot and phone restart;
+  a full framework restart races the SIM and resets it -> m77 re-runs m304 in the background.
+- **m77:** thaws + kills only still-stopped frozen pids (stale file after reboot is safe), stops s26_dogsteal.
+- **Open:** no IPv4 on LTE (Android clat doesn't survive; need tayga/clatd in Nura: github.com fails on LTE
+  only). Camera/audio under Plan C not re-verified (audioserver/cameraserver may block on the frozen
+  system_server). SMS next. m81 (kill path) still the default session; m306 is the data-capable one.
+
 ## Smaller open items
 - `vendor.usbudev` crash-loops every ~10 s under Nura (init restarts it).
 - USB/adb doesn't recover after suspend while plugged in.
