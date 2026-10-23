@@ -6,6 +6,9 @@ export XDG_RUNTIME_DIR=/run/user/1000
 export XDG_CURRENT_DESKTOP=Phosh:GNOME XDG_SESSION_DESKTOP=phosh XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland
 # no user namespaces in the Android kernel -> WebKit (Epiphany) bwrap sandbox can't start
 export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+# Qualcomm's V4L2 H.264 encoder node registers at rank primary+1 but can't encode from Linux (won't
+# preroll) -> encodebin picks it over x264 and Snapshot video recording fails. Rank it out.
+export GST_PLUGIN_FEATURE_RANK=v4l2h264enc:NONE,v4l2h265enc:NONE,v4l2vp8enc:NONE,v4l2vp9enc:NONE
 # GPU: Adreno 840 sits behind Android's kgsl, not DRM -> lfdevs Mesa (m109_mesa.sh) with the kgsl gallium driver.
 # /etc/s26-gpu: "gpu" (default, apps on GL), "vulkan" (apps on turnip Vulkan), "compositor" (phoc on GPU,
 # apps draw on CPU), or "cpu" (pixman + cairo). GL apps flicker (no implicit sync on kgsl buffers?) — testing.
@@ -44,6 +47,11 @@ setsid nohup squeekboard >$L/squeek.log 2>&1 &
 pulseaudio --check || pulseaudio --start
 pactl load-module module-pipe-sink file=/var/lib/s26audio/fifo format=s16le rate=48000 channels=2 sink_name=s26 sink_properties=device.description=Speaker >/dev/null
 pactl set-default-sink s26
+# no mic bridge yet: an always-running silent source as the default mic. With only s26.monitor (silent
+# while the speaker sink is suspended) recorders starve: mp4mux waits on the audio track and Snapshot's
+# video recording deadlocks. (module-null-source refuses a source_properties description here.)
+pactl load-module module-null-source source_name=s26mic >/dev/null
+pactl set-default-source s26mic
 # volume keys: Phosh hands XF86AudioRaise/LowerVolume to gsd-media-keys, which gnome-session would normally start
 setsid nohup /usr/libexec/gsd-media-keys >$L/gsd-media-keys.log 2>&1 &
 # PipeWire's RT module (in every client: Snapshot, browsers...) gets no limits from rtkit (not running) and leaves
