@@ -1,0 +1,11 @@
+ctrl_interface=/data/local/tmp/nura_stage/wpa_ctrl
+update_config=0
+
+# Copy to nura_wpa.conf, then fill in your Wi-Fi name and password (keep the quotes).
+# Add more network={} blocks for more networks.
+network={
+  ssid="YOUR_SSID"
+  psk="YOUR_PASSWORD"
+  key_mgmt=WPA-PSK SAE
+  ieee80211w=1
+}

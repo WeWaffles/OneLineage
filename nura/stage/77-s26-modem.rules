@@ -1,0 +1,4 @@
+# Nura: the SoC modem (QRTR, MM "qcom-soc" device) uses the vendor IPA netdev rmnet_ipa0 for data;
+# it is a virtual netdev, which MM filters out unless ID_MM_DEVICE_PROCESS is set; Android already holds QMAP mux
+# ids 1..15 (rmnet_data0..14), so MM starts its own links at mux 20; its links (qmapmux*) are virtual too
+SUBSYSTEM=="net", KERNEL=="rmnet_ipa0|qmapmux*|rmnet_data*", ENV{ID_MM_CANDIDATE}="1", ENV{ID_MM_DEVICE_PROCESS}="1", ENV{ID_MM_PHYSDEV_UID}="qcom-soc", ENV{ID_MM_INITIAL_QMAP_MUX_ID}="15"

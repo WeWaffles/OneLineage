@@ -1,0 +1,7 @@
+# Scripts and sources run on the phone: keep LF on every checkout
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.apk binary
+*.jar binary
+assets/7zz binary
+assets/zygote_exec binary
