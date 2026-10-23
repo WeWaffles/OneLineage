@@ -9,6 +9,9 @@ for d in sleepd:m113_sleepd powerkeyd:m132_powerkeyd thermlog:m124_thermlog dogp
   p=$(cat $S/${d%%:*}.pid 2>/dev/null); [ -n "$p" ] && grep -q "${d#*:}" /proc/$p/cmdline 2>/dev/null && kill -TERM $p
 done
 pkill -f "getevent -l" 2>/dev/null
+# mobile data (m308 + our rild client): Android's phone process takes over as rild's client again
+p=$(cat $S/lte.pid 2>/dev/null); [ -n "$p" ] && grep -q m308_lte /proc/$p/cmdline 2>/dev/null && kill -TERM $p
+pkill -f S26RilData 2>/dev/null
 pkill -f s26_audiobridge 2>/dev/null
 # camera stand-ins (m175) hold names of surfaceflinger/system_server services: they must be gone before those start
 kill $(pidof s26_camd) 2>/dev/null

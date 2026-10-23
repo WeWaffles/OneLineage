@@ -66,10 +66,19 @@ echo 2000 > /sys/class/backlight/panel0-backlight/brightness 2>/dev/null
 setprop ctl.stop wpa_supplicant 2>/dev/null
 pkill -9 wpa_supplicant 2>/dev/null
 ip addr flush dev wlan0
+# the vendor Wi-Fi HAL can leave the chip rfkill soft-blocked (driver unloaded) -> unblock; NM's
+# `radio wifi on` below powers it back up
+for r in /sys/class/rfkill/rfkill*; do [ "$(cat $r/type)" = wlan ] && echo 0 > $r/soft; done
 ip link set wlan0 up
-# Android policy routing: let everything fall through to the main table (where NM puts its routes)
+# Android policy routing: let everything fall through to the main table (where NM and m308 put routes).
+# Both families: without the -6 rule IPv6 dead-ends in Android's "32000 unreachable".
 ip rule del pref 31999 2>/dev/null
 ip rule add pref 31999 from all lookup main
+ip -6 rule del pref 31999 2>/dev/null
+ip -6 rule add pref 31999 from all lookup main
+# mobile data: our own rild client (s26_rildata) sets up the internet call, m308 configures rmnet
+p=$(cat /data/local/tmp/nura_stage/lte.pid 2>/dev/null); [ -n "$p" ] && grep -q m308_lte /proc/$p/cmdline 2>/dev/null && kill $p
+setsid nohup sh /data/local/tmp/nura_stage/m308_lte.sh > /data/local/tmp/nura_stage/lte.log 2>&1 < /dev/null &
 
 mkdir -p $CHROOT/usr/local/libexec
 cp /data/local/tmp/nura_stage/m106_user_session.sh $CHROOT/usr/local/libexec/s26-user-session
@@ -116,11 +125,18 @@ $BB unshare -m --propagation slave chroot $CHROOT /usr/bin/env -i \
     # polkit: "user" (wheel) gets wifi/installs without a password (rule from m105_user.sh)
     pgrep polkitd >/dev/null || setsid nohup /usr/lib/polkit-1/polkitd --no-debug >/root/polkit.log 2>&1 &
     sleep 2
+    # NM must never touch the rmnet interfaces (m308 owns the LTE one, Android keeps the rest)
+    mkdir -p /etc/NetworkManager/conf.d
+    printf "[keyfile]\nunmanaged-devices=interface-name:rmnet*\n" > /etc/NetworkManager/conf.d/99-s26-rmnet.conf
+    # DNS: static dual-stack resolvers so lookups work on Wi-Fi and on LTE alike
+    printf "[main]\ndns=none\n" > /etc/NetworkManager/conf.d/98-s26-dns.conf
+    printf "nameserver 1.1.1.1\nnameserver 2606:4700:4700::1111\nnameserver 2001:4860:4860::8888\n" > /etc/resolv.conf
     # wifi: Alpine wpa_supplicant on D-Bus (-u) + NetworkManager
     pkill -9 NetworkManager 2>/dev/null; rm -f /run/wpa_supplicant/wlan0
     setsid nohup wpa_supplicant -u -s >/root/wpa.log 2>&1 &
     sleep 1
     setsid nohup NetworkManager --no-daemon >/root/nm.log 2>&1 &
+    sleep 2; nmcli radio wifi on 2>/dev/null
     for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
       nmcli -t -f STATE general 2>/dev/null | grep -q "^connected" && break
       sleep 2

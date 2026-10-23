@@ -6,3 +6,6 @@ backups_*/
 stage/nura_wpa.conf
 probe/results/
 *.log
+# rildata build output and the downloaded d8 (r8.jar)
+rildata/build/
+tools/

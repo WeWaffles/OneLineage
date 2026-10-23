@@ -130,6 +130,26 @@ ModemManager only runs when D-Bus activates it (NetworkManager does). Provisioni
 - Result: `defaultDataSubId=1`, internet DN `fast.t-mobile.com` comes up next to IMS, wifi off → ping6 and
   IPv4 (Android clat) both work. Unblocks Plan B pivot (m290/m291). Needs re-check after reboot.
 
+## Cellular data in the NORMAL session - 2026-10-23 (supersedes Plan C below)
+Just boot Nura as usual (`m99_run81.sh`): mobile data comes up by itself, camera/audio untouched.
+- **s26_rildata** (`rildata/`, Java via `app_process`, no zygote needed): our own client of rild's
+  `IRadioData/slot1` (AIDL v4) in place of com.android.phone. setResponseFunctions → setDataAllowed →
+  setupDataCall(NGRAN, fast.t-mobile.com, IPV4V6, profile 0). Retries on failure (right after rild restarts
+  setup fails with cause -7; modem suggests 5 s) and re-sets-up if the call drops. Writes `rildata.state`.
+  Extends the device's own AIDL Stub classes from the boot classpath; PC build = javac against
+  compile-only stubs + d8 (`tools/r8.jar` from Google Maven), `rildata/build.ps1`.
+- **m308_lte.sh** (started by m81): supervises the client, applies the call to the interface (rmnet_data1
+  in practice): mtu, addresses, default routes metric 700 (Wi-Fi from NM wins), flush on change.
+- **IPv4 works on LTE without clat:** the modem hands out 192.0.0.2/27 gw 192.0.0.1 (modem-side 464XLAT).
+- m81 now also: `ip -6 rule pref 31999`, rfkill unblock + `nmcli radio wifi on` (Wi-Fi came up
+  `driver=unloaded` otherwise), NM unmanaged rmnet*, static dual-stack resolv.conf (NM dns=none).
+- m77 stops m308 + client. Killing our client does NOT restart rild (only com.android.phone's death does).
+- Verified cold: m77 → m99_run81 → call in 6 s; HTTPS on Wi-Fi, on LTE only (IPv4 github + IPv6), back.
+- Phosh shows 5G: its indicator comes from ModemManager (NM D-Bus-activates the patched MM, QMI). Data is
+  still ours via rild; never add an NM gsm connection or MM sets up a competing bearer.
+- **Open:** SMS (IRadioMessaging; T-Mobile SA likely needs IMS), audio/camera need a hands-on check. Android's own DDS reset is
+  irrelevant now (only Plan C needs it).
+
 ## Cellular data WORKING IN NURA - 2026-10-23 (Plan C: freeze, don't kill)
 Run: `adb shell su 0 sh /data/local/tmp/nura_stage/m306_planC.sh` (from a booted One UI). Back: m77 as usual.
 Verified: Phosh up, Wi-Fi (NM) connected, HTTPS on Wi-Fi; Wi-Fi disconnected -> HTTPS over LTE (v6) via
