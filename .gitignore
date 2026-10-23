@@ -3,6 +3,6 @@ keystore/
 backups_*/
 *.idsig
 # Nura: local Wi-Fi credentials, probe output, logs
-nura/stage/nura_wpa.conf
-nura/probe/results/
+stage/nura_wpa.conf
+probe/results/
 *.log

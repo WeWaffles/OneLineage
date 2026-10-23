@@ -1,63 +1,84 @@
 # OneNura
 
-Hot-switch between stock **One UI** and a **LineageOS 23.2 (Android 16) GSI** on a rooted Samsung phone, with no reflashing and no second partition. OneLineage stages the GSI under `/data/local/tmp`, pivots into it as a container with its own zygote and system_server, and can hand the screen back to One UI.
+Hot-switch between stock **One UI** and **Nura (postmarketOS / Alpine Linux) with a Phosh session** on a rooted Samsung phone, with no reflashing, no second partition and no mainline kernel. Nura's userland runs on Samsung's downstream Android kernel: it takes DRM master on `card0` from the QTI composer, drives the panel itself, and hands the screen back to One UI on exit.
 
-**This branch (`onenura`)** adds a Nura (postmarketOS / Alpine Linux) guest with a Phosh session in place of the GSI. See [`nura/README.md`](nura/README.md). The switch-to-Nura app (milestone M5) isn't wired up yet, so Nura is started from its scripts for now.
+OneNura is a branch of [OneLineage](https://github.com/WeWaffles/OneLineage), which does the same with a LineageOS GSI. It reuses OneLineage's staging and SELinux handling and its approach of keeping the host's services alive.
 
 If something isn't working and you have a fix feel free to make a pr!
 
 > ## Disclaimer
-> **This has been tested on only a handful of devices, and it seems if you want to install it without making modifications, it has to be on Android 16**
+> **This has been tested on one device (Galaxy S26, SM-S942U, Snapdragon) and is very much a work in progress.**
 > It may not work on other Samsung models, other One UI versions, or other devices at all. It is experimental, it replaces core parts of a running system, and it can crash, hang or soft-brick your phone, fill `/data`, or break radio/SMS. **Back up everything first. Use at your own risk.**
 > Also, I did use AI a fair bit in this project, it would have taken a LOT longer without it.
 
 ## Requirements
-- A rooted Samsung phone (the tested one is an S26 Ultra on One UI 8.5)
-- Enough free space on `/data` for the extracted GSI
-- Internet access for the GSI download (LineageOS 23.2 GSI, EXT4, VANILLA or GAPPS builds from SourceForge)
+- A rooted Samsung phone (tested: Galaxy S26 SM-S942U, Snapdragon "canoe" SM8850, Adreno 840, One UI 8.5, KernelSU)
+- A few GB free on `/data` for the Alpine rootfs
+- Internet access on the phone for Alpine packages
+
+## Status
+| Feature | State |
+| --- | --- |
+| Display, touch, Phosh UI | Working |
+| GPU (lfdevs Mesa, kgsl) | Working, with a glFlush→glFinish shim against tearing |
+| Wi-Fi (NetworkManager) | Working |
+| Audio | Working (PulseAudio pipe sink → AAudio bridge on the Android side) |
+| Camera | Working (stand-in binder services for cameraserver, PipeWire camera node) |
+| Flatpak / Flathub, incl. GPU | Working |
+| Screen off/on, suspend | Working (suspend only while unplugged from USB) |
+| Mobile data | In progress: works on the Android side (`m304_dds.sh`); handing it over to Nura is next |
+| SMS, calls | Not yet |
+| Switch-to-Nura app | Not yet; Nura is started from scripts for now |
+
+## Quick start
+1. Push `stage/` to `/data/local/tmp/nura_stage` and build the Alpine chroot at `nura_stage/rootfs` (`m1_setup.sh`, then `m80_phosh.sh`).
+2. Copy `stage/nura_wpa.conf.example` to `nura_wpa.conf` and fill in your Wi-Fi; `m100_nm_install.sh` imports it into NetworkManager.
+3. Build the helpers (see below), then boot Nura: `adb shell su 0 sh /data/local/tmp/nura_stage/m99_run81.sh`
+4. Back to One UI: `adb shell su 0 sh /data/local/tmp/nura_stage/m77_back.sh`
+
+Quoting through `adb shell su 0 sh -c` breaks easily: push a script and run it instead.
 
 ## What's in here
 | Path | What it is |
 | --- | --- |
-| `src/`, `res/`, `AndroidManifest.xml` | The Android app (`com.wewaffles.onelineage`) |
-| `assets/master_prepare.sh` | Stages the rootfs, binds the patched files, fixes labels/ownership |
-| `assets/master_inner.sh` | Runs inside the container, starts the guest zygote |
-| `assets/switch_to_lineage.sh` / `return_to_oneui.sh` | Switch in and back out |
-| `assets/zygote_exec` | Static aarch64 launcher for the guest zygote |
-| `build_apk.sh` | Builds and signs the APK |
+| `stage/` | Mirrors `/data/local/tmp/nura_stage` on the phone. Scripts reference each other by that path, so push the folder as-is. |
+| `probe/` | Read-only feasibility probe (`run-probe.ps1` pushes, runs and pulls results). |
+| `FEASIBILITY.md` | The original feasibility study and milestone log. |
+| `HANDOFF.md` | Detailed current state and open work. |
+| `src/`, `res/`, `AndroidManifest.xml`, `assets/`, `build_apk.sh` | The OneLineage app and container scripts, kept as the base for the OneNura app |
 
-## Patches
+## Scripts in `stage/`
+**Session**
+- `m99_run81.sh` → `m81_phosh_session.sh`: takeover and Phosh session (detached, logs to `m81.log`; `m90b_peek.sh` reads it)
+- `m77_back.sh`: tear down and restore the Android display stack
+- `m105_user.sh`, `m106_user_session.sh`, `m186_userdirs.sh`, `m138_onboard_install.sh`: guest user, session env, first run
+- `m97_netup.sh`, `m95_wificonf.sh`, `m100_nm_install.sh`: networking
+- `m113_sleepd.sh`, `m126_dogpet.sh`, `m131_unblank.sh`, `m132_powerkeyd.sh`, `m124_thermlog.sh`: suspend, softdog, screen wake, power key, thermals
+- `m161_insess.sh`: run a script as `user` inside the live session's mount namespace
 
-### Patched system files (bind-mounted over the GSI)
-- `services_patched.jar` over `system/framework/services.jar`
-- `framework_patched.jar` over `system/framework/framework.jar`
-- `PermissionController_patched.apk`: removes the `android.permission.RANGING` reference so runtime-permission dialogs stop crashing (Samsung's PermissionController needs a permission the LineageOS 23.2 platform doesn't define)
-- Optional bind-mounts when present: `framework-res_patched.apk`, `libaudio_aidl_conversion_common_cpp_patched.so`, `libaudioclient_aidl_conversion_patched.so`
+**GPU and apps**
+- `m109_mesa.sh`: lfdevs Mesa (kgsl); `m136_build_glfinish.sh` + `s26_glfinish.c`: tearing shim
+- `m146_sandbox_mounts.sh`, `m150_build_bwrapwrap.sh` + `s26_bwrap_wrap.c`: Flatpak/bwrap support
+- `m157`/`m159`/`m160`/`m162`: the `org.freedesktop.Platform.GL.kgsl` Flatpak GL extension
 
-### Boot and environment fixes
-1. **APEX paths in the container.** Host `/system/apex` and `/system_ext/apex` are bound into the rootfs after the GSI payloads are extracted, so PackageManagerService stops dying in `scanApexPackages`.
-2. **SELinux labels on the staged `/data`.** The tree is relabeled like a real `/data` (`system_data_file`, per-package `app_data_file`) instead of `shell_data_file`. Also `setenforce 0` during the takeover and `setenforce 1` on return.
-3. **Audio hang.** Host `audioserver`/`cameraserver` are left running (they used to be stopped/frozen, which deadlocked `AudioService`). Only the host zygote is suppressed.
-4. **Runaway `sf.log`.** SurfaceFlinger output goes to `/dev/null` (it was growing to hundreds of MB in minutes).
-5. **App data ownership.** `fix_app_dirs.sh` re-owns app data dirs to the uid PackageManager assigned, strips write bits from dex/apk/jar files (ART refuses writable dex), and creates missing dirs such as `/data/misc/bluedroid`.
-6. **No installd.** `ensure_app_storage.sh` plus a 15 s sweeper create `/data/user/0`, `/data/user_de/0` and shared-storage dirs for new installs, so apps installed inside Lineage can launch.
-7. **Gesture navigation.** Overlay idmaps are generated with `idmap2 --ignore-overlayable` before zygote starts.
-8. **Bluetooth crash loop** fixed by creating `/data/misc/bluedroid` before boot.
-9. **adb.** `Settings.Global.ADB_ENABLED` is pre-seeded, host `adb_keys` are copied into the guest, and `adb_watchdog.sh` keeps adbd and the USB gadget alive.
-10. **Networking.** The preferred APN is switched to `IPV4V6`, and `net_fix.sh` maintains a private routing table (4242) because the guest's ConnectivityService can't program the host's netd.
-11. **SMS.** `ims_watchdog.sh` keeps One UI's `imsd` running and `switch_to_lineage.sh` waits for voice registration before pivoting.
-12. **Boot diagnostics.** Each boot writes `/data/boot_failures.log`.
+**Android-side helpers** (bionic binaries built in the chroot with gcc `-nostdlib` against the device's `/system/lib64`, no NDK)
+- Audio: `s26_audiobridge.c` (`m164`)
+- Camera: `s26_fakeam.c` (`m174`, started by `m175_camstack.sh`), `s26_camd.c` (`m179`), `s26_pwcam.c` (`m182`), `s26_camfeed.sh`, `s26_camprobe.c` (`m173`)
+
+**Cellular**
+- `m304_dds.sh`: fixes Android mobile data (sets the default data subscription and restarts the phone process)
+- `m290_planB.sh` / `m291_pivotv2.sh`: let Android hold the data call, then pivot with targeted stops
+- `m296_unwedge.sh`: QMI provisioning toggle for the `CARD_IO_ERROR` SIM wedge
+- `m191_qmi_provision.sh`, `m199_build_mm.sh` (+ `s26_mm_*.c/.py` patches), `m194_mm_netport.sh` + `77-s26-modem.rules`, `m195_mm_debug.sh`, `m200_mm_connect.sh`, `muxdump.c`
+
+**Bring-up**
+- `test_kms.c`: the plain-libdrm KMS test
 
 ## Known issues
-- Returning to One UI may still need a manual reboot.
-- The guest binds the host's `media.codec`, whose AIDL hash differs from the GSI's, which can cause high CPU during codec enumeration.
-- No IMS stack in the guest, so **voice calls don't work** (data and SMS depend on One UI's `imsd`).
-- Developer options crash (the guest registers no `adb` service).
-- DTMF tones glitch, and deep-buffer audio hangs, so it stays disabled.
-- Never kill the host `netd` while Lineage is running.
-
-## Building
-Edit the paths at the top of `build_apk.sh` (JDK 17, Android SDK build-tools 34, android-34 platform), provide your own signing keystore, then run `./build_apk.sh`.
+- Real suspend only works while unplugged from USB, and adb doesn't recover after suspend while plugged in.
+- `vendor.usbudev` crash-loops every ~10 s while Nura runs.
+- No IPv6 route on Wi-Fi.
+- The guest user is uid 1000 (same as Android `system`): never `pkill -u user`.
 
 ## Credits
-LineageOS GSI builds by MisterZtr (SourceForge). LineageOS and Android are trademarks of their respective owners. Not affiliated with Samsung, Google or LineageOS.
+Built on OneLineage. postmarketOS, Alpine Linux, Phosh, Mesa (lfdevs kgsl builds) and ModemManager belong to their respective projects. Not affiliated with Samsung, Google, postmarketOS or Alpine.
