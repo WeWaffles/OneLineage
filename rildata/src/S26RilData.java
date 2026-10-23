@@ -1,16 +1,19 @@
 // S26RilData — rild's data client in place of com.android.phone, so Nura gets mobile data while the
 // Android framework is stopped (camera/audio stand-ins keep working). Run with app_process (no zygote
 // needed); it uses the device's own radio AIDL classes from the boot classpath.
-//   CLASSPATH=s26_rildata.dex app_process / S26RilData up [apn]   # set up the internet call, stay alive
-//   ... S26RilData list                                             # print rild's current calls, exit
+//   CLASSPATH=s26_rildata.dex app_process / S26RilData up [apn...]  # keep these calls up, stay alive
+//   ... S26RilData list                                              # print rild's current calls, exit
+// Default APNs: fast.t-mobile.com (internet). "ims" gets the IMS profile (One UI's: profile 2, IPV6).
 // rild drops every call when its client dies, so `up` must keep running for the whole session.
 // Each call state is printed as one line and written to $STATE for the network script:
-//   CALL cid=1 active=2 ifname=rmnet_data0 addrs=a/64,b/27 gws=fe80::2,192.0.0.1 dns=... mtu=1436
+//   CALL apn=fast.t-mobile.com cid=1 active=2 ifname=rmnet_data0 addrs=a/64,b/27 gws=... dns=... pcscf=... mtu=1436
 import android.hardware.radio.RadioResponseInfo;
 import android.hardware.radio.data.*;
 import android.os.IBinder;
 
 import java.io.FileWriter;
+import java.util.ArrayList;
+import java.util.List;
 
 public class S26RilData {
     static final String SERVICE = "android.hardware.radio.data.IRadioData/slot1";
@@ -18,22 +21,32 @@ public class S26RilData {
     // AOSP enum values (radio AIDL)
     static final int ACCESS_NETWORK_NGRAN = 6;
     static final int REASON_NORMAL = 1;
+    static final int PDP_IPV6 = 1;
     static final int PDP_IPV4V6 = 2;
     static final int APN_DEFAULT_SUPL_MMS_XCAP = 1 | 2 | 4 | 2048;
+    static final int APN_IMS = 64;
     static final int RESPONSE_SOLICITED_ACK_EXP = 2;
     static final int INDICATION_UNSOLICITED_ACK_EXP = 1;
+    static final long RETRY_MS = 10000;
+
+    // One call we want kept up. Right after rild restarts the modem's data side isn't ready and setup
+    // fails (cause -7), and the network can drop a call later: the main loop (re)sends setupDataCall.
+    static class Want {
+        final String apn;
+        final DataProfileInfo profile;
+        volatile boolean needSetup = true;
+        volatile long nextSetupAt;
+        volatile int pendingSerial = -1;    // a setupDataCall is in flight: list updates don't retry
+        volatile int cid = -1;              // rild's id for our call, once it's up
+        Want(String apn) { this.apn = apn; profile = apn.equals("ims") ? imsProfile() : internetProfile(apn); }
+        void retryLater(long ms) { cid = -1; nextSetupAt = System.currentTimeMillis() + ms; needSetup = true; }
+    }
 
     static IRadioData data;
     static final Object lock = new Object();
     static boolean listOnly;
-    static String apn;
     static int serial = 10;
-    // set when no active internet call: the main loop (re)sends setupDataCall. Right after rild restarts
-    // the modem's data side isn't ready and setup fails (cause -7), and the network can drop a call later.
-    static volatile boolean needSetup = true;
-    static volatile long nextSetupAt;
-    static final long RETRY_MS = 10000;
-    static volatile boolean setupPending;   // a setupDataCall is in flight: list updates don't retry
+    static final List<Want> wants = new ArrayList<>();
 
     static void log(String s) { System.out.println(s); System.out.flush(); }
 
@@ -44,11 +57,18 @@ public class S26RilData {
         return b.toString();
     }
 
+    static Want byCid(int cid) {
+        for (Want w : wants) if (w.cid == cid) return w;
+        return null;
+    }
+
     static String describe(SetupDataCallResult r) {
         StringBuilder a = new StringBuilder();
         if (r.addresses != null) for (LinkAddress l : r.addresses) { if (a.length() > 0) a.append(','); a.append(l.address); }
-        return "CALL cid=" + r.cid + " active=" + r.active + " cause=" + r.cause + " ifname=" + r.ifname
-                + " addrs=" + a + " gws=" + join(r.gateways) + " dns=" + join(r.dnses) + " mtu=" + r.mtuV6;
+        Want w = byCid(r.cid);
+        return "CALL apn=" + (w != null ? w.apn : "?") + " cid=" + r.cid + " active=" + r.active + " cause=" + r.cause
+                + " ifname=" + r.ifname + " addrs=" + a + " gws=" + join(r.gateways) + " dns=" + join(r.dnses)
+                + " pcscf=" + join(r.pcscf) + " mtu=" + r.mtuV6;
     }
 
     static boolean usable(SetupDataCallResult r) {
@@ -57,18 +77,15 @@ public class S26RilData {
 
     static void report(SetupDataCallResult[] calls) {
         StringBuilder all = new StringBuilder();
-        boolean up = false;
-        if (calls != null) for (SetupDataCallResult r : calls) {
-            String d = describe(r); log(d); all.append(d).append('\n');
-            up |= usable(r);
-        }
+        if (calls != null) for (SetupDataCallResult r : calls) { String d = describe(r); log(d); all.append(d).append('\n'); }
         try (FileWriter w = new FileWriter(STATE)) { w.write(all.toString()); } catch (Exception e) { log("state write: " + e); }
-        if (!up && !needSetup && !setupPending) { log("no active call -> setting up again"); retryLater(RETRY_MS); }
-    }
-
-    static void retryLater(long ms) {
-        nextSetupAt = System.currentTimeMillis() + ms;
-        needSetup = true;
+        // any of our calls missing from the list (dropped by the network) -> set it up again
+        for (Want w : wants) {
+            if (w.needSetup || w.pendingSerial >= 0 || w.cid < 0) continue;
+            boolean up = false;
+            if (calls != null) for (SetupDataCallResult r : calls) up |= r.cid == w.cid && usable(r);
+            if (!up) { log(w.apn + ": call gone -> setting up again"); w.retryLater(RETRY_MS); }
+        }
     }
 
     static int field(Class<?> c, String name, int dflt) {
@@ -105,14 +122,18 @@ public class S26RilData {
         public void setInitialAttachApnResponse(RadioResponseInfo info) { done("setInitialAttachApn", info); }
         public void setupDataCallResponse(RadioResponseInfo info, SetupDataCallResult dc) {
             done("setupDataCall", info);
-            setupPending = false;
-            if (dc != null) log(describe(dc));
+            Want w = null;
+            for (Want x : wants) if (x.pendingSerial == info.serial) w = x;
+            if (w == null) { log("setupDataCall response for unknown serial " + info.serial); return; }
+            w.pendingSerial = -1;
             if (info.error != 0 || !usable(dc)) {
                 long wait = dc != null && dc.suggestedRetryTime > 0 ? dc.suggestedRetryTime : RETRY_MS;
-                log("setup failed -> retry in " + wait + " ms");
-                retryLater(wait);
+                log(w.apn + ": setup failed (cause " + (dc != null ? dc.cause : -1) + ") -> retry in " + wait + " ms");
+                w.retryLater(wait);
                 return;
             }
+            w.cid = dc.cid;
+            log(describe(dc));
             // re-read the full list so the state file holds every call rild has
             try { data.getDataCallList(100); } catch (Exception e) { log("getDataCallList: " + e); }
         }
@@ -137,12 +158,9 @@ public class S26RilData {
         public String getInterfaceHash() { return hash(IRadioDataIndication.class); }
     }
 
-    static DataProfileInfo internetProfile(String apn) {
+    static DataProfileInfo baseProfile(String apn) {
         DataProfileInfo p = new DataProfileInfo();
-        p.profileId = 0;                    // ID_DEFAULT
         p.apn = apn;
-        p.protocol = PDP_IPV4V6;
-        p.roamingProtocol = PDP_IPV4V6;
         p.authType = 0;                     // NO_PAP_NO_CHAP
         p.user = "";
         p.password = "";
@@ -151,11 +169,9 @@ public class S26RilData {
         p.maxConns = 20;
         p.waitTime = 0;
         p.enabled = true;
-        p.supportedApnTypesBitmap = APN_DEFAULT_SUPL_MMS_XCAP;
         p.bearerBitmap = 0;
         p.mtuV4 = 0;
         p.mtuV6 = 0;
-        p.preferred = true;
         p.persistent = true;
         p.alwaysOn = false;
         p.trafficDescriptor = new TrafficDescriptor();
@@ -164,10 +180,32 @@ public class S26RilData {
         return p;
     }
 
+    static DataProfileInfo internetProfile(String apn) {
+        DataProfileInfo p = baseProfile(apn);
+        p.profileId = 0;                    // ID_DEFAULT
+        p.protocol = PDP_IPV4V6;
+        p.roamingProtocol = PDP_IPV4V6;
+        p.supportedApnTypesBitmap = APN_DEFAULT_SUPL_MMS_XCAP;
+        p.preferred = true;
+        return p;
+    }
+
+    // as One UI sends it (RILJ log): T-Mobile IMS, ims, IPV6 / roaming IPV4V6, profileId=2
+    static DataProfileInfo imsProfile() {
+        DataProfileInfo p = baseProfile("ims");
+        p.profileId = 2;                    // ID_IMS
+        p.protocol = PDP_IPV6;
+        p.roamingProtocol = PDP_IPV4V6;
+        p.supportedApnTypesBitmap = APN_IMS;
+        p.preferred = false;
+        return p;
+    }
+
     public static void main(String[] args) throws Exception {
         String cmd = args.length > 0 ? args[0] : "up";
-        apn = args.length > 1 ? args[1] : "fast.t-mobile.com";
         listOnly = cmd.equals("list");
+        for (int i = 1; i < args.length; i++) wants.add(new Want(args[i]));
+        if (wants.isEmpty()) wants.add(new Want("fast.t-mobile.com"));
 
         IBinder b = (IBinder) Class.forName("android.os.ServiceManager")
                 .getMethod("waitForDeclaredService", String.class).invoke(null, SERVICE);
@@ -179,18 +217,21 @@ public class S26RilData {
 
         data.setResponseFunctions(new Response(), new Indication());
         data.getDataCallList(1);
+        // network client too: rild rejects the IMS call until someone has asked for registration state
+        if (!listOnly) S26Ril.startNetwork();
         if (listOnly) {
             synchronized (lock) { lock.wait(10000); }
             System.exit(0);
         }
         data.setDataAllowed(2, true);
         while (true) {
-            if (needSetup && System.currentTimeMillis() >= nextSetupAt) {
-                needSetup = false;
-                setupPending = true;
-                data.setupDataCall(serial++, ACCESS_NETWORK_NGRAN, internetProfile(apn), true, REASON_NORMAL,
+            for (Want w : wants) {
+                if (!w.needSetup || System.currentTimeMillis() < w.nextSetupAt) continue;
+                w.needSetup = false;
+                w.pendingSerial = serial++;
+                data.setupDataCall(w.pendingSerial, ACCESS_NETWORK_NGRAN, w.profile, true, REASON_NORMAL,
                         new LinkAddress[0], new String[0], 0, null, true);
-                log("setupDataCall sent for " + apn);
+                log("setupDataCall sent for " + w.apn + " (serial " + w.pendingSerial + ")");
             }
             Thread.sleep(1000);
         }

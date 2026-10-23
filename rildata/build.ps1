@@ -9,7 +9,8 @@ New-Item -ItemType Directory -Force "$out\stubs", "$out\classes" | Out-Null
 $stubs = Get-ChildItem "$here\stubs" -Recurse -Filter *.java | ForEach-Object FullName
 javac --release 11 -nowarn -d "$out\stubs" $stubs
 if ($LASTEXITCODE) { throw 'stub compile failed' }
-javac --release 11 -cp "$out\stubs" -d "$out\classes" "$here\src\S26RilData.java"
+$src = Get-ChildItem "$here\src" -Recurse -Filter *.java | ForEach-Object FullName
+javac --release 11 -cp "$out\stubs" -d "$out\classes" $src
 if ($LASTEXITCODE) { throw 'compile failed' }
 
 $classes = Get-ChildItem "$out\classes" -Recurse -Filter *.class | ForEach-Object FullName

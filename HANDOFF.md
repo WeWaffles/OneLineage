@@ -147,7 +147,20 @@ Just boot Nura as usual (`m99_run81.sh`): mobile data comes up by itself, camera
 - Verified cold: m77 → m99_run81 → call in 6 s; HTTPS on Wi-Fi, on LTE only (IPv4 github + IPv6), back.
 - Phosh shows 5G: its indicator comes from ModemManager (NM D-Bus-activates the patched MM, QMI). Data is
   still ours via rild; never add an NM gsm connection or MM sets up a competing bearer.
-- **Open:** SMS (IRadioMessaging; T-Mobile SA likely needs IMS), audio/camera need a hands-on check. Android's own DDS reset is
+- **SMS needs IMS (verified 2026-10-23):** in Nura, MM `--send` → QMI WMS error 53 NetworkNotReady; no
+  SMS over NAS on T-Mobile SA. Calls need IMS anyway (VoPS=1, PsOnly). Samsung's IMS stack is the app
+  com.sec.imsservice (zygote child; native imsd is only a helper). Modem exposes no IMSA/IMSS/IMSP QMI
+  services (only Samsung "IMS QMI Priv" 77), so no modem-side IMS. => SMS + calls need our own IMS client.
+- **IMS client groundwork (2026-10-23):** One UI's REGISTER (imscap/, local only, has IMSI/IMEI) is
+  textbook: TCP 5060 to P-CSCF, IMPI <IMSI>@msg.pc.t-mobile.com, AKAv1-MD5 (USIM), sec-agree ipsec-3gpp
+  transport (hmac-md5/sha1 x 3des/aes/null), Samsung User-Agent, +g.3gpp.smsip.
+  - Step 1 done: s26_rildata also keeps the `ims` call up (profile 2, IPV6) → rmnet_data2 + 3 P-CSCFs in
+    $S/ims.pcscf; m308 adds host routes; TCP 5060 open to all three. Needed an IRadioNetwork client first
+    (rild rejected IMS with "PS not regi" until someone queried registration) — stubs + catch-all
+    callbacks generated from AOSP AIDL by rildata/gen_stubs.ps1.
+  - Step 2 done: `S26RilSim card|aka RAND AUTN` (IRadioSim.requestIccSimAuthentication, ctx 129). SIM
+    has USIM + ISIM, both ready; bogus challenge → sw 9862 (MAC failure) = path works.
+  - Next: step 3 SIP REGISTER + IPsec (xfrm) → needs user OK (registers the line to Nura). Android's own DDS reset is
   irrelevant now (only Plan C needs it).
 
 ## Cellular data WORKING IN NURA - 2026-10-23 (Plan C: freeze, don't kill)
