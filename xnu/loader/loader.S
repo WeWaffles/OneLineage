@@ -51,12 +51,12 @@
     .type _start, %function
 
 _start:
-    /* x20 = our own parameter block. The reference goes through the local
-     * .Lparams label so the assembler resolves it here: a reference to the
-     * global loader_params would leave a relocation, and an unlinked image
-     * would carry zero immediates instead of an address. */
-    adrp    x20, .Lparams
-    add     x20, x20, :lo12:.Lparams
+    /* x20 = our own parameter block, a few hundred bytes ahead. `adr` is one
+     * instruction and, unlike an adrp/add pair to the same label, the
+     * assembler resolves it here instead of leaving a relocation behind -- an
+     * unlinked image would then carry zeros where the address belongs.
+     * tools/xnu/extract_elf.py refuses such an image outright. */
+    adr     x20, .Lparams
 
     /* 1. loader_params must carry the magic loader.py writes. */
     ldr     x1, [x20, #PARAMS_MAGIC]
