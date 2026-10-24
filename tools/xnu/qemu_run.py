@@ -40,6 +40,10 @@ BOOT_LINE_LENGTH = 608
 SEGMENT_TABLE_OFFSET = CMDLINE_OFFSET + BOOT_LINE_LENGTH
 
 QEMU_MACHINE = "virt,gic-version=3"
+# `virtualization=on` gives the guest EL2 and starts it there. XNU's arm64
+# start.s programs EL2 registers on some machine configurations, which traps
+# when the CPU was entered at EL1.
+QEMU_MACHINE_EL2 = "virt,gic-version=3,virtualization=on"
 QEMU_CPU = "cortex-a72"
 PAGE = 0x4000
 LOADER_RESERVE = 0x10000
@@ -83,7 +87,7 @@ def parse_payload(payload: bytes) -> dict:
     return values
 
 
-def plan(payload: bytes, *, loader_size: int = LOADER_RESERVE) -> dict:
+def plan(payload: bytes, *, loader_size: int = LOADER_RESERVE, el2: bool = False) -> dict:
     """Lay out RAM for one boot and build the matching boot_args block."""
     info = parse_payload(payload)
     phys_base = info["phys_base"]
@@ -132,8 +136,9 @@ def plan(payload: bytes, *, loader_size: int = LOADER_RESERVE) -> dict:
         device_tree_length=info["tree_size"],
     )
     return {
-        "machine": QEMU_MACHINE,
+        "machine": QEMU_MACHINE_EL2 if el2 else QEMU_MACHINE,
         "cpu": QEMU_CPU,
+        "starting_el": 2 if el2 else 1,
         "ram_base": phys_base,
         "kernel_phys": phys_base,
         "ram_size": info["mem_size"],
@@ -257,6 +262,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--boot-plan", type=Path, help="where to write the boot plan JSON")
     parser.add_argument("--console", default="stdio", help="stdio or file:PATH")
     parser.add_argument("--execute", action="store_true", help="actually start QEMU")
+    parser.add_argument("--el2", action="store_true",
+                        help="enter the guest at EL2 instead of EL1")
     parser.add_argument("--timeout", type=float,
                         help="stop the guest after this many seconds instead of waiting for it to exit")
     parser.add_argument("--debug-log", type=Path,
@@ -271,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
         if not image:
             raise SystemExit("loader image is empty")
         loader_size = align(len(image), 0x1000)
-    layout = plan(payload, loader_size=loader_size)
+    layout = plan(payload, loader_size=loader_size, el2=args.el2)
 
     boot_path = args.loader
     if image is not None and args.loader_symbols:
