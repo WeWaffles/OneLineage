@@ -167,6 +167,12 @@ segment_next:
     b       segment_loop
 
 segments_done:
+    /* One line before the handover. Without it, a kernel that faults before
+     * its console is up looks exactly like a loader that never ran. */
+    adr     x5, msg_enter
+    mov     x6, #(msg_enter_end - msg_enter)
+    bl      uart_report
+
     /* Caches are off at entry, so the stores above are already visible to
      * instruction fetch. dsb/isb make that ordering explicit rather than
      * assumed, and neither needs a cache maintenance instruction that would
@@ -185,22 +191,26 @@ segments_done:
 fail_params:
     adr     x5, msg_params
     mov     x6, #(msg_params_end - msg_params)
-    b       uart_report
+    bl      uart_report
+    b       halt
 
 fail_payload:
     adr     x5, msg_payload
     mov     x6, #(msg_payload_end - msg_payload)
-    b       uart_report
+    bl      uart_report
+    b       halt
 
-/* x5 = bytes, x6 = length. Clobbers x4, x5, x6, x7. */
+/* x5 = bytes, x6 = length. Clobbers x4, x5, x6, x7; returns to the caller. */
 uart_report:
     movz    x4, #0x0900, lsl #16        /* PL011 data register */
 uart_loop:
-    cbz     x6, halt
+    cbz     x6, uart_done
     ldrb    w7, [x5], #1
     str     w7, [x4]
     subs    x6, x6, #1
     b.ne    uart_loop
+uart_done:
+    ret
 
 halt:
     wfi
@@ -213,6 +223,10 @@ msg_params_end:
 msg_payload:
     .ascii  "ONELXNU loader: payload header is not ONELXNU v1\n"
 msg_payload_end:
+
+msg_enter:
+    .ascii  "ONELXNU loader: segments placed, entering kernel\n"
+msg_enter_end:
 
 /*
  * Patched by tools/xnu/loader.py. The magic is left zero so an unpatched image

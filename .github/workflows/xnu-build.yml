@@ -102,7 +102,17 @@ jobs:
           python3 tools/xnu/qemu_run.py build/xnu/m3q.payload \
             --loader build/xnu/loader.bin --loader-symbols build/xnu/loader.json \
             --boot-plan build/xnu/boot-plan.json \
-            --console file:build/xnu/console.log --execute --timeout 30 || true
+            --console file:build/xnu/console.log \
+            --debug-log build/xnu/qemu-debug.log \
+            --execute --timeout 30 || true
+
+          # A heredoc body would keep its indentation inside this YAML block
+          # scalar, which Python reads as an IndentationError, so this stays a
+          # one-liner.
+          SUMMARY="$(python3 -c 'import json; p = json.load(open("build/xnu/boot-plan.json")); print(" ".join(f"{k}={p[k]}" for k in ("segments", "kernel_phys", "payload_phys", "payload_size", "loader_addr", "boot_args_phys", "adt_phys", "top_of_kernel_data", "loader_entry_phys") if k in p))')"
+          echo "--- boot plan ---"
+          echo "$SUMMARY"
+          printf '::notice title=boot plan::%s\n' "${SUMMARY//%/%%}"
 
           echo "--- console ---"
           cat build/xnu/console.log || echo "(no console output)"
@@ -112,6 +122,11 @@ jobs:
           done < <(head -n 12 build/xnu/console.log 2>/dev/null || true)
           if [[ ! -s build/xnu/console.log ]]; then
             echo "::warning::the guest produced no console output at all"
+            echo "--- qemu exception trace (tail) ---"
+            tail -n 20 build/xnu/qemu-debug.log 2>/dev/null || echo "(no trace)"
+            while IFS= read -r line; do
+              printf '::warning title=qemu trace::%s\n' "${line//%/%%}"
+            done < <(grep -E "Taking exception|ELR|FAR|ESR|SPSR" build/xnu/qemu-debug.log 2>/dev/null | head -n 8 || true)
           fi
 
       - name: Surface the failure

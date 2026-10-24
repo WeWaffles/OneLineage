@@ -159,7 +159,7 @@ def plan(payload: bytes, *, loader_size: int = LOADER_RESERVE) -> dict:
 
 def command(plan_: dict, *, payload_path: Path, loader_path: Path,
             boot_args_path: Path, qemu: str = "qemu-system-aarch64",
-            console: str = "stdio") -> list[str]:
+            console: str = "stdio", debug_log: Path | None = None) -> list[str]:
     """QEMU argument vector for a planned boot."""
     if plan_["phone_execution_authorized"]:
         raise ValueError("refusing to build a command for an authorized execution")
@@ -182,6 +182,10 @@ def command(plan_: dict, *, payload_path: Path, loader_path: Path,
         "-display", "none",
         "-no-reboot",
     ]
+    if debug_log is not None:
+        # Exceptions and guest errors only reach stderr, which a failed boot
+        # otherwise leaves empty and undiagnosable.
+        argv += ["-d", "int,guest_errors", "-D", str(debug_log)]
     return argv
 
 
@@ -255,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--execute", action="store_true", help="actually start QEMU")
     parser.add_argument("--timeout", type=float,
                         help="stop the guest after this many seconds instead of waiting for it to exit")
+    parser.add_argument("--debug-log", type=Path,
+                        help="write QEMU exception/guest-error tracing here")
     args = parser.parse_args(argv)
 
     payload = args.payload.read_bytes()
@@ -306,14 +312,16 @@ def main(argv: list[str] | None = None) -> int:
         print("command: " + " ".join(command(layout, payload_path=args.payload,
                                             loader_path=boot_path,
                                             boot_args_path=boot_args_path,
-                                            console=args.console)))
+                                            console=args.console,
+                                            debug_log=args.debug_log)))
         return 0
 
     qemu = shutil.which("qemu-system-aarch64")
     if not qemu:
         raise SystemExit("qemu-system-aarch64 is not installed; nothing was started")
     argv = command(layout, payload_path=args.payload, loader_path=boot_path,
-                   boot_args_path=boot_args_path, qemu=qemu, console=args.console)
+                   boot_args_path=boot_args_path, qemu=qemu, console=args.console,
+                   debug_log=args.debug_log)
     print("running: " + " ".join(argv))
     if args.timeout is None:
         return subprocess.run(argv, text=True).returncode
