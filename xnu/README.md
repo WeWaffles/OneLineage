@@ -172,7 +172,8 @@ The runner setup matters more than it looks:
 | Compiles and links (`DEVELOPMENT`/`ARM64`/`SWEET`, qemu profile) | verified on `macos-14` (2026-10-24) |
 | Loader assembles, has no relocations, and fits its reserve | verified on `macos-14` (2026-10-24) |
 | Loader parameters are filled from the boot plan | verified (offline) |
-| Reaches an early console line in QEMU | **not run** — needs a QEMU host |
+| Loader places a payload's segments and hands over `boot_args` | verified on QEMU (stub payload, 2026-10-24) |
+| Reaches an early console line with XNU itself | **not run** — needs the built kernel |
 | Anything on the SM-S948U | not implemented, not authorized |
 
 ## What the adaptations settled, and what is left
@@ -255,17 +256,47 @@ python tools/xnu/qemu_run.py build/m3q-qemu.payload --loader build/loader.bin \
 same on a `macos-14` runner and uploads `xnu-loader`; its first green run was
 2026-10-24 (2.2 KiB artifact, image well under the 64 KiB reserve).
 
-Still open before a QEMU run can show kernel output:
+### Smoke test on real QEMU
+
+`tools/xnu/smoke_test.py` assembles the loader and a stub payload, plans the
+boot, patches the loader, starts `qemu-system-aarch64` and checks the console:
+
+```sh
+python3 tools/xnu/smoke_test.py     # needs clang and qemu-system-aarch64
+```
+
+The stub (`xnu/loader/stub.S`) prints one line only if `x0` held `boot_args`
+whose `physBase` is the planned RAM base. It is the cheapest way to prove the
+loader, and it paid for itself immediately -- running it caught four defects
+that review had not:
+
+1. The parameter magic was assembled as `"ONELAPRM"`: the 16-bit immediate for
+   `"PA"` was byte-swapped, so a correct, patched image rejected itself. A test
+   now rebuilds the constant from the assembler text.
+2. The `.bss` zero loop used 8-byte stores from `destination + filesize`, which
+   is almost never aligned. With the MMU off every access is Device memory, so
+   that was an alignment fault, not a slow path. Both loops now fall back to
+   bytes when the addresses are not 8-byte aligned.
+3. The kernel's first segment lands at the base of RAM -- where the payload
+   itself sat, so the copy would have overwritten the bytes it was reading. The
+   payload now goes above the kernel's span.
+4. `-M virt` puts its own device tree in the first MiB of RAM and QEMU refuses
+   to start when a `-device loader` region overlaps it, so the plan keeps the
+   payload clear of that MiB.
+
+A fifth defect was in the harness rather than the image: `boot_args` was
+computed and written to a file, but never loaded into guest memory, so `x0`
+pointed at zeros.
+
+Still open before an XNU console line:
 
 1. **The kernel image, locally.** It exists only as the `xnu-kernel-qemu`
-   artifact from the `macos-14` run; fetching it needs an authenticated GitHub
-   session and none has been used here. `xnu/build_xnu.sh` reproduces it from a
-   Mac in one command.
-2. **A first execution.** The loader has been assembled, checked and patched,
-   but nothing has run it: this host has no `qemu-system-aarch64`. Whether XNU
-   takes over at `start.s` is still unproven.
-3. **A real payload.** `qemu_run.py` is exercised here against a synthetic
-   one-segment payload and the generated ADT, not against a built kernel. Note
-   that a real kernel carries a `__CTF` debug overlay whose file size exceeds
-   its (zero) VM size; the packer drops zero-VM segments, which is why that
-   overlay does not reach the payload.
+   artifact from the `macos-14` run, and downloading an artifact needs an
+authenticated GitHub session, which this work did not have.
+   `xnu/build_xnu.sh` reproduces it from a Mac in one command.
+2. **First XNU execution.** The loader has run on QEMU with a stub payload;
+   whether XNU takes over at `start.s` is still unproven.
+3. **A real payload.** Everything above was exercised against a stub, not the
+   built kernel. Note that a real kernel carries a `__CTF` debug overlay whose
+   file size exceeds its (zero) VM size; the packer drops zero-VM segments,
+   which is why that overlay does not reach the payload.

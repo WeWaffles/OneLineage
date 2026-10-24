@@ -18,7 +18,7 @@ import struct
 
 MAGIC = b"ONELPARM"
 VERSION = 1
-SIZE = 48
+SIZE = 56
 OFFSETS = {
     "magic": 0,
     "version": 8,
@@ -26,13 +26,16 @@ OFFSETS = {
     "stack_top": 24,
     "entry_phys": 32,
     "payload_phys": 40,
+    "kernel_phys": 48,
 }
 ALIGNMENT = {
     "boot_args_phys": 16,
     "stack_top": 16,
     "entry_phys": 4,
     "payload_phys": 0x4000,
+    "kernel_phys": 0x4000,
 }
+ADDRESSES = ("boot_args_phys", "stack_top", "entry_phys", "payload_phys", "kernel_phys")
 
 
 def read(image: bytes, params_offset: int) -> dict:
@@ -52,13 +55,13 @@ def read(image: bytes, params_offset: int) -> dict:
         "magic": magic.decode("ascii", "replace"),
         "version": version,
     }
-    for name in ("boot_args_phys", "stack_top", "entry_phys", "payload_phys"):
+    for name in ADDRESSES:
         values[name] = struct.unpack_from("<Q", block, OFFSETS[name])[0]
     return values
 
 
 def patch(image: bytes, params_offset: int, *, boot_args_phys: int, stack_top: int,
-          entry_phys: int, payload_phys: int) -> bytes:
+          entry_phys: int, payload_phys: int, kernel_phys: int) -> bytes:
     """Return ``image`` with the parameter block set for one boot."""
     current = read(image, params_offset)
     wanted = {
@@ -66,6 +69,7 @@ def patch(image: bytes, params_offset: int, *, boot_args_phys: int, stack_top: i
         "stack_top": stack_top,
         "entry_phys": entry_phys,
         "payload_phys": payload_phys,
+        "kernel_phys": kernel_phys,
     }
     if current["patched"]:
         already = all(current[name] == value for name, value in wanted.items())
@@ -112,7 +116,7 @@ def summarize(image: bytes, params_offset: int) -> dict:
         "size": len(image),
         "phone_execution_authorized": False,
     }
-    for name in ("boot_args_phys", "stack_top", "entry_phys", "payload_phys"):
+    for name in ADDRESSES:
         report[name] = hex(values[name])
     return report
 
@@ -130,6 +134,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--entry", type=lambda value: int(value, 0), required=True,
                         help="kernel entry as a physical address")
     parser.add_argument("--payload", type=lambda value: int(value, 0), required=True)
+    parser.add_argument("--kernel", type=lambda value: int(value, 0), required=True,
+                        help="physical address the kernel image is placed at")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -142,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
             args.image.read_bytes(), symbols["loader_params"]["offset"],
             boot_args_phys=args.boot_args, stack_top=args.stack_top,
             entry_phys=args.entry, payload_phys=args.payload,
+            kernel_phys=args.kernel,
         )
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)

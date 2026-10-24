@@ -111,9 +111,12 @@ def extract(data: bytes, section: str = ".text", start: str | None = "_start") -
                 continue
             end = strings.find(b"\0", name_offset)
             name = strings[name_offset:end if end >= 0 else len(strings)].decode("ascii", "replace")
-            if not name:
+            # $x/$d are AArch64 mapping symbols, not labels anyone asks for.
+            if not name or name.startswith("$"):
                 continue
-            if value >= len(image) or value + size > len(image):
+            # An end-of-section label legitimately points one past the last
+            # byte, so only a start past the end is out of bounds.
+            if value > len(image) or value + size > len(image):
                 raise ValueError(f"symbol {name} is outside {section}")
             symbols[name] = {"offset": value, "size": size}
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import struct
@@ -27,6 +28,31 @@ import verify_xnu_series  # noqa: E402
 
 def child(node: adt.Node, name: str) -> adt.Node:
     return next(item for item in node.children if item.name == name)
+
+
+def asm_x2_constants(source: str) -> set[int]:
+    """Rebuild every movz/movk-x2 constant the loader compares against.
+
+    The magics are written as four 16-bit immediates; the first version of the
+    parameter magic had "PA" swapped to "AP", so the loader rejected a payload
+    it had just been given correctly. Nothing caught that until it ran, so the
+    assembler text is now checked against the Python constants.
+    """
+    value = 0
+    seen = set()
+    for line in source.splitlines():
+        match = re.search(r"mov([zk])\s+x2, #(0x[0-9a-fA-F]+)(?:,\s*lsl\s*#(\d+))?", line)
+        if match:
+            shift = int(match.group(3) or 0)
+            if match.group(1) == "z":
+                value = int(match.group(2), 16) << shift
+            else:
+                value = (value & ~(0xFFFF << shift)) | (int(match.group(2), 16) << shift)
+            continue
+        if value and re.search(r"\b(cmp|b\.ne)\b", line):
+            seen.add(value)
+            value = 0
+    return seen
 
 
 class XnuToolsTest(unittest.TestCase):
@@ -452,8 +478,29 @@ class XnuQemuPlanTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "magic"):
             qemu_run.parse_payload(b"NOTXNU\0" + self.payload[8:])
 
+    def test_kernel_image_does_not_land_on_the_payload(self):
+        # The kernel's first segment is placed at kernel_phys, which used to be
+        # where the payload itself was loaded: the loader would have copied over
+        # the bytes it was reading. The payload sits above the kernel's span.
+        info = qemu_run.parse_payload(self.payload)
+        span = info["kernel_end"] - info["virtual_base"]
+        self.assertEqual(self.plan["kernel_phys"], info["phys_base"])
+        self.assertGreaterEqual(self.plan["payload_phys"], self.plan["kernel_phys"] + span)
+        for segment in info["segment_table"]:
+            destination = self.plan["kernel_phys"] + segment["vmaddr"] - info["virtual_base"]
+            self.assertLessEqual(destination + segment["vmsize"], self.plan["payload_phys"],
+                                 "a kernel segment would overwrite the payload")
+
+    def test_payload_clears_qemu_own_device_tree(self):
+        # `-M virt` places its device tree at the base of RAM and refuses an
+        # overlapping -device loader region, so the payload must start past it.
+        self.assertGreaterEqual(self.plan["payload_phys"],
+                                self.plan["ram_base"] + qemu_run.QEMU_DTB_RESERVE)
+
     def test_layout_regions_do_not_overlap(self):
+        info = qemu_run.parse_payload(self.payload)
         regions = [
+            (self.plan["kernel_phys"], info["kernel_end"] - info["virtual_base"], "kernel"),
             (self.plan["payload_phys"], self.plan["payload_size"], "payload"),
             (self.plan["loader_addr"], self.plan["loader_reserve"], "loader"),
             (self.plan["boot_args_phys"], self.plan["boot_args_size"], "boot_args"),
@@ -479,13 +526,16 @@ class XnuQemuPlanTest(unittest.TestCase):
 
     def test_command_loads_loader_and_payload(self):
         argv = qemu_run.command(
-            self.plan, payload_path=Path("payload.bin"), loader_path=Path("loader.bin")
+            self.plan, payload_path=Path("payload.bin"), loader_path=Path("loader.bin"),
+            boot_args_path=Path("bootargs.bin"),
         )
         joined = " ".join(argv)
         self.assertIn("qemu-system-aarch64", argv[0])
         self.assertIn("virt,gic-version=3", joined)
         self.assertIn(f"addr={self.plan['payload_phys']:#x}", joined)
         self.assertIn(f"addr={self.plan['loader_addr']:#x}", joined)
+        # boot_args has to be in guest memory, not just in the plan.
+        self.assertIn(f"file=bootargs.bin,addr={self.plan['boot_args_phys']:#x}", joined)
         self.assertIn("cpu-num=0", joined)
         self.assertIn("mon:stdio", joined)
 
@@ -507,7 +557,8 @@ class XnuQemuPlanTest(unittest.TestCase):
     def test_command_refuses_an_authorized_boot(self):
         with self.assertRaisesRegex(ValueError, "authorized"):
             qemu_run.command({**self.plan, "phone_execution_authorized": True},
-                             payload_path=Path("payload.bin"), loader_path=Path("loader.bin"))
+                             payload_path=Path("payload.bin"), loader_path=Path("loader.bin"),
+                             boot_args_path=Path("bootargs.bin"))
 
 
 class XnuLoaderImageTest(unittest.TestCase):
@@ -556,6 +607,16 @@ class XnuLoaderImageTest(unittest.TestCase):
             self.assertEqual(missing.returncode, 1)
             self.assertIn("does not define nope", missing.stderr)
 
+    def test_end_of_section_label_is_allowed(self):
+        # clang emits a size-0 label one past the last byte for `.ascii` ends.
+        image, report = extract_elf.extract(elf_object(
+            self.text, [("_start", 0, 4), ("msg_end", 64, 0)]
+        ))
+        self.assertEqual(report["symbols"]["msg_end"]["offset"], 64)
+        self.assertEqual(len(image), 64)
+        with self.assertRaisesRegex(ValueError, "outside .text"):
+            extract_elf.extract(elf_object(self.text, [("_start", 0, 4), ("gone", 80, 0)]))
+
     def test_rejects_unresolved_relocations(self):
         # A reference to a global symbol stays a relocation in an object file;
         # extracted raw, the instruction would carry a zero instead of an
@@ -580,12 +641,37 @@ class XnuLoaderImageTest(unittest.TestCase):
         self.assertEqual(image, self.text)
 
 
+class XnuLoaderSourceTest(unittest.TestCase):
+    def test_magic_immediates_match_the_python_constants(self):
+        source = (ROOT / "xnu" / "loader" / "loader.S").read_text(encoding="utf-8")
+        constants = asm_x2_constants(source)
+        self.assertIn(int.from_bytes(loader.MAGIC, "little"), constants,
+                      "the loader's parameter magic must equal loader.MAGIC")
+        self.assertIn(int.from_bytes(build_payload.MAGIC, "little"), constants,
+                      "the loader's payload magic must equal build_payload.MAGIC")
+
+    def test_parameter_offsets_match_loader_py(self):
+        source = (ROOT / "xnu" / "loader" / "loader.S").read_text(encoding="utf-8")
+        names = {
+            "magic": "PARAMS_MAGIC", "version": "PARAMS_VERSION",
+            "boot_args_phys": "PARAMS_BOOT_ARGS", "stack_top": "PARAMS_STACK_TOP",
+            "entry_phys": "PARAMS_ENTRY", "payload_phys": "PARAMS_PAYLOAD",
+            "kernel_phys": "PARAMS_KERNEL",
+        }
+        self.assertEqual(set(names), set(loader.OFFSETS))
+        for key, symbol in names.items():
+            equ = re.search(rf"\.equ {symbol},\s+(\d+)", source)
+            self.assertIsNotNone(equ, f"loader.S has no {symbol}")
+            self.assertEqual(int(equ.group(1)), loader.OFFSETS[key], f"{symbol} drifted")
+
+
 class XnuLoaderParamsTest(unittest.TestCase):
     def setUp(self):
         self.image = bytes(16) + bytes(loader.SIZE) + bytes(16)
         self.offset = 16
         self.values = dict(boot_args_phys=0x40020000, stack_top=0x40030000,
-                           entry_phys=0x40001000, payload_phys=0x40000000)
+                           entry_phys=0x40001000, payload_phys=0x40100000,
+                           kernel_phys=0x40000000)
 
     def test_patch_round_trip_and_idempotence(self):
         patched = loader.patch(self.image, self.offset, **self.values)
@@ -662,9 +748,10 @@ class XnuQemuLoaderRunTest(unittest.TestCase):
         self.assertEqual(values["boot_args_phys"], layout["boot_args_phys"])
         self.assertEqual(values["stack_top"], layout["stack_top"])
         self.assertEqual(values["payload_phys"], layout["payload_phys"])
+        self.assertEqual(values["kernel_phys"], layout["kernel_phys"])
         self.assertEqual(
             values["entry_phys"],
-            layout["kernel_entry"] - layout["virtual_base"] + layout["ram_base"],
+            layout["kernel_entry"] - layout["virtual_base"] + layout["kernel_phys"],
         )
         written = json.loads(plan_path.read_text(encoding="utf-8"))
         self.assertEqual(written["loader_params_offset"], 8)

@@ -57,7 +57,7 @@ Update it whenever a milestone, blocker, test result, or next action changes.
 - Documented the loader contract (payload header, segment placement, `x0`,
   entry) in `xnu/README.md`. The loader image itself still needs an AArch64
   cross toolchain, which this host does not have.
-- Offline XNU tool tests: 45 passing after the loader.
+- Offline XNU tool tests: 50 passing after the loader.
 - **The macOS 14 VM built the kernel.** Run `40083156740` on `macos-14` (Xcode
   15.x, Kernel Debug Kit 13.5 downloaded by `build.sh`) finished green in about
   six minutes. The harness applied all 18 pinned patches and all 4 adaptations,
@@ -92,6 +92,24 @@ Update it whenever a milestone, blocker, test result, or next action changes.
   `.github/workflows/xnu-loader.yml` builds the loader on `macos-14` in seconds
   and uploads `xnu-loader`. First green run: 2026-10-24, image under the 64 KiB
   reserve, `_start` at offset 0 and `loader_params` present.
+- **Ran the loader on real QEMU**, against `xnu/loader/stub.S` via
+  `tools/xnu/smoke_test.py` (WSL Ubuntu, `qemu-system-aarch64`, clang cross). It
+  now copies the payload's segment, puts `boot_args` in `x0` and reaches the
+  entry with the planned `physBase`. Five defects only running found:
+  - the parameter magic was assembled as `"ONELAPRM"` (the 16-bit immediate for
+    `"PA"` was byte-swapped), so a correctly patched image rejected itself. A
+    test now rebuilds both magics from the assembler text.
+  - the `.bss` zero loop stored 8 bytes from `destination + filesize`, which is
+    almost never aligned; with the MMU off that is Device memory, so it was an
+    alignment fault (data abort at `FAR 0x400000b5`). Both loops now fall back
+    to bytes when unaligned.
+  - the kernel's first segment lands at the RAM base, which is exactly where the
+    payload sat: the loader would have copied over the bytes it was reading. The
+    payload now starts above the kernel's span.
+  - `-M virt` keeps its own device tree in the first MiB of RAM and refuses to
+    start when a `-device loader` region overlaps it, so the plan keeps clear.
+  - the harness never loaded `boot_args` into guest memory, so `x0` pointed at
+    zeros even though the plan had the right values.
 - Audited the macOS 14 CI VM against the real `darwin-xnu-build` build.sh at the
   pinned commit, and fixed what would have made a run fail or look broken:
   - the preflight required an SDK `mig` and SDK `Kernel.framework` headers.
@@ -119,22 +137,21 @@ Update it whenever a milestone, blocker, test result, or next action changes.
 
 ## Current task
 
-Both halves of a boot now exist as artifacts: the kernel from the `macos-14`
-build, the loader from the `macos-14` assembly job. What is missing is a machine
-that runs them together — a host with `qemu-system-aarch64` — plus a local copy
-of the kernel to pack.
+The loader is now proven on real QEMU with a stub payload, so the remaining
+gap is the kernel image itself: it exists only as the `xnu-kernel-qemu`
+artifact, and downloading an artifact requires an authenticated GitHub session
+that this work did not have. Everything after that is one command.
 
-Nothing has booted. `qemu_run.py` has planned layouts and patched loader images
-against a synthetic payload; no QEMU has started, and the phone remains
-untouched.
+XNU itself has not run. No XNU instruction has executed on any CPU, and the
+phone remains untouched.
 
 ## Next tasks, in order
 
-1. Get both artifacts onto one machine with QEMU (`brew install qemu` on a Mac,
-   or `qemu-system-aarch64` on Linux): fetch `xnu-kernel-qemu` and
-   `xnu-loader`, pack the kernel with `tools/xnu/build_payload.py` against the
-   generated ADT, then run `tools/xnu/qemu_run.py --loader loader.bin
-   --loader-symbols loader.json --execute` and read the first console line.
+1. Get `xnu-kernel-qemu` off GitHub (download it while signed in, or give the
+   work a valid `gh` login), then pack it with
+   `tools/xnu/build_payload.py` against the generated ADT and run
+   `tools/xnu/qemu_run.py --loader loader.bin --loader-symbols loader.json
+   --execute`. The harness itself is already verified on this host.
 2. Work through whatever the first boot reports. The likeliest early failures
    are `start.s` expectations about the exception level and the stack, and the
    ADT properties the platform expert matches on -- all of which are visible on
@@ -164,15 +181,17 @@ Still open:
 
 - The kernel compiles and links; the adaptations are proven to build, not yet
   to boot. Nothing has been executed.
-- The loader exists and is patched from the plan, but it has never executed;
-  its segment copy, `.bss` zeroing and handover are reviewed and tested, not
-  proven on a running CPU.
+- The loader runs and hands over correctly with a stub payload; what remains
+  unproven is whether XNU's `start.s` accepts the state it is given (exception
+  level, stack, `boot_args` contents).
 
 ## Host limits observed on 2026-10-24
 
-- This Windows host has no clang, gcc, docker, or `qemu-system-aarch64`, and the
-  WSL optional component is not enabled, so the WSL test path used earlier is
-  unavailable. Assembling the loader therefore happens in CI; running it cannot.
+- This Windows host has no clang, gcc, docker, or `qemu-system-aarch64`, but
+  WSL2 (Ubuntu 26.04) is available and has clang; `qemu-system-arm` was
+  installed there, which is what ran the smoke test.
+- GitHub artifact downloads need an authenticated session (metadata is public,
+  the zip is 401 without a token), so the built kernel could not be fetched here.
 - Offline verification of the pinned series runs here; the kernel build has to
   run on macOS or the `macos-14` workflow.
 

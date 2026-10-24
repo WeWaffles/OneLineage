@@ -44,6 +44,10 @@ QEMU_CPU = "cortex-a72"
 PAGE = 0x4000
 LOADER_RESERVE = 0x10000
 STACK_SIZE = 0x10000
+# `-M virt` builds its own (unused, because boot_args carries ours) device tree
+# at the base of RAM, and QEMU refuses to start when a `-device loader` region
+# overlaps another ROM region. Guests may write over it later; loads may not.
+QEMU_DTB_RESERVE = 0x100000
 
 
 def align(value: int, boundary: int = PAGE) -> int:
@@ -89,7 +93,21 @@ def plan(payload: bytes, *, loader_size: int = LOADER_RESERVE) -> dict:
     if info["mem_size"] <= 0 or info["mem_size"] % (1 << 20):
         raise ValueError("QEMU -m takes a whole number of MiB of RAM")
 
-    payload_end = phys_base + len(payload)
+    # The kernel image lands at PC-physical phys_base + (vmaddr - virtual_base),
+    # which starts at phys_base itself. The payload holds that image, so it
+    # cannot sit there: the loader would copy over the very bytes it is reading.
+    # It goes above the kernel's span instead, and the embedded ADT moves with
+    # it.
+    kernel_span = info["kernel_end"] - info["virtual_base"]
+    if kernel_span <= 0 or kernel_span % PAGE:
+        raise ValueError(f"kernel span {kernel_span:#x} is not a positive page multiple")
+    payload_phys = align(max(phys_base + kernel_span, phys_base + QEMU_DTB_RESERVE))
+    payload_end = payload_phys + len(payload)
+    if payload_end > mem_end:
+        raise ValueError(
+            f"payload of {len(payload):#x} bytes above a {kernel_span:#x}-byte "
+            f"kernel does not fit {info['mem_size']:#x} bytes of RAM"
+        )
     loader_addr = align(payload_end)
     loader_end = loader_addr + loader_size
     boot_args_addr = align(loader_end)
@@ -104,7 +122,7 @@ def plan(payload: bytes, *, loader_size: int = LOADER_RESERVE) -> dict:
             f"the payload declares {info['mem_size']:#x}"
         )
 
-    device_tree_phys = phys_base + info["tree_offset"]
+    device_tree_phys = payload_phys + info["tree_offset"]
     blob, args_report = boot_args.build(
         cmdline=info["cmdline"],
         phys_base=phys_base,
@@ -117,8 +135,9 @@ def plan(payload: bytes, *, loader_size: int = LOADER_RESERVE) -> dict:
         "machine": QEMU_MACHINE,
         "cpu": QEMU_CPU,
         "ram_base": phys_base,
+        "kernel_phys": phys_base,
         "ram_size": info["mem_size"],
-        "payload_phys": phys_base,
+        "payload_phys": payload_phys,
         "payload_size": len(payload),
         "loader_addr": loader_addr,
         "loader_reserve": loader_size,
@@ -139,7 +158,8 @@ def plan(payload: bytes, *, loader_size: int = LOADER_RESERVE) -> dict:
 
 
 def command(plan_: dict, *, payload_path: Path, loader_path: Path,
-            qemu: str = "qemu-system-aarch64", console: str = "stdio") -> list[str]:
+            boot_args_path: Path, qemu: str = "qemu-system-aarch64",
+            console: str = "stdio") -> list[str]:
     """QEMU argument vector for a planned boot."""
     if plan_["phone_execution_authorized"]:
         raise ValueError("refusing to build a command for an authorized execution")
@@ -151,6 +171,9 @@ def command(plan_: dict, *, payload_path: Path, loader_path: Path,
         "-smp", "1",
         "-device", f"loader,file={payload_path},addr={plan_['payload_phys']:#x},force-raw=on",
         "-device", f"loader,file={loader_path},addr={plan_['loader_addr']:#x},cpu-num=0,force-raw=on",
+        # Without this the kernel's x0 points at zeros: the blob exists in the
+        # plan, but nothing had ever put it in guest memory.
+        "-device", f"loader,file={boot_args_path},addr={plan_['boot_args_phys']:#x},force-raw=on",
         # The kernel's bootstrap console is the PL011 at 0x09000000, so the
         # serial line carries the first visible output. "stdio" borrows QEMU's
         # monitor-on-stdio preset; anything else is a QEMU chardev spec such as
@@ -196,13 +219,14 @@ def prepare_loader(image: bytes, layout: dict, offset: int, output: Path) -> Pat
     """Patch the parameter block and write the image QEMU should load."""
     # The kernel entry is a virtual address, and the loader runs with the MMU
     # off, so it has to branch to the same byte through its physical alias.
-    entry_phys = layout["kernel_entry"] - layout["virtual_base"] + layout["ram_base"]
+    entry_phys = layout["kernel_entry"] - layout["virtual_base"] + layout["kernel_phys"]
     patched = loader.patch(
         image, offset,
         boot_args_phys=layout["boot_args_phys"],
         stack_top=layout["stack_top"],
         entry_phys=entry_phys,
         payload_phys=layout["payload_phys"],
+        kernel_phys=layout["kernel_phys"],
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(patched)
@@ -251,10 +275,10 @@ def main(argv: list[str] | None = None) -> int:
     elif image is not None:
         print("loader parameter block left blank: pass --loader-symbols to fill it for this boot")
 
-    if args.boot_args:
-        args.boot_args.parent.mkdir(parents=True, exist_ok=True)
-        args.boot_args.write_bytes(layout["boot_args"])
-        print(f"wrote boot_args: {args.boot_args} ({layout['boot_args_size']} bytes)")
+    boot_args_path = args.boot_args or args.payload.with_suffix(".bootargs.bin")
+    boot_args_path.parent.mkdir(parents=True, exist_ok=True)
+    boot_args_path.write_bytes(layout["boot_args"])
+    print(f"wrote boot_args: {boot_args_path} ({layout['boot_args_size']} bytes)")
 
     for label, key in (("payload", "payload_phys"), ("loader", "loader_addr"),
                        ("boot_args", "boot_args_phys"), ("adt", "adt_phys")):
@@ -278,14 +302,16 @@ def main(argv: list[str] | None = None) -> int:
         )
     if not args.execute:
         print("command: " + " ".join(command(layout, payload_path=args.payload,
-                                            loader_path=boot_path, console=args.console)))
+                                            loader_path=boot_path,
+                                            boot_args_path=boot_args_path,
+                                            console=args.console)))
         return 0
 
     qemu = shutil.which("qemu-system-aarch64")
     if not qemu:
         raise SystemExit("qemu-system-aarch64 is not installed; nothing was started")
     argv = command(layout, payload_path=args.payload, loader_path=boot_path,
-                   qemu=qemu, console=args.console)
+                   boot_args_path=boot_args_path, qemu=qemu, console=args.console)
     print("running: " + " ".join(argv))
     return subprocess.run(argv, text=True).returncode
 

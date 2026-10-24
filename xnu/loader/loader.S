@@ -3,7 +3,7 @@
  *
  * QEMU enters this image at loader_addr with the MMU, both caches and the
  * stack off. It is position independent: every address it needs comes from
- * loader_params, the 48-byte block at the end of this image, which
+ * loader_params, the 56-byte block at the end of this image, which
  * tools/xnu/loader.py patches from the boot plan before the image is used.
  * Nothing is computed here that the plan already decided, so the layout has
  * exactly one implementation.
@@ -13,7 +13,7 @@
  *   2. check the payload's ONELXNU header, and that its phys_base agrees with
  *      the address the plan loaded it at;
  *   3. copy each segment from payload + fileoff to
- *      phys_base + (vmaddr - virtual_base);
+ *      kernel_phys + (vmaddr - virtual_base);
  *   4. zero the difference between filesize and vmsize, which is where the
  *      kernel's .bss lives;
  *   5. put boot_args in x0, the stack top in sp, and branch to the entry
@@ -35,6 +35,7 @@
     .equ PARAMS_STACK_TOP, 24
     .equ PARAMS_ENTRY,   32
     .equ PARAMS_PAYLOAD, 40
+    .equ PARAMS_KERNEL,  48
 
     .equ HDR_MAGIC,        0
     .equ HDR_VERSION,      8
@@ -62,7 +63,7 @@ _start:
     ldr     x1, [x20, #PARAMS_MAGIC]
     movz    x2, #0x4e4f                 /* "ON" */
     movk    x2, #0x4c45, lsl #16        /* "EL" */
-    movk    x2, #0x5041, lsl #32        /* "PA" */
+    movk    x2, #0x4150, lsl #32        /* "PA" */
     movk    x2, #0x4d52, lsl #48        /* "RM" */
     cmp     x1, x2
     b.ne    fail_params
@@ -71,12 +72,13 @@ _start:
     ldr     x22, [x20, #PARAMS_STACK_TOP]
     ldr     x23, [x20, #PARAMS_ENTRY]
     ldr     x24, [x20, #PARAMS_PAYLOAD]
+    ldr     x29, [x20, #PARAMS_KERNEL]  /* where the kernel image belongs */
 
     /* 2. The payload header must be ONELXNU version 1. */
     ldr     x1, [x24, #HDR_MAGIC]
     movz    x2, #0x4e4f                 /* "ON" */
     movk    x2, #0x4c45, lsl #16        /* "EL" */
-    movk    x2, #0x584e, lsl #32        /* "XN" */
+    movk    x2, #0x4e58, lsl #32        /* "XN" */
     movk    x2, #0x0055, lsl #48        /* "U\0" */
     cmp     x1, x2
     b.ne    fail_payload
@@ -90,9 +92,9 @@ _start:
 
     ldr     x26, [x24, #HDR_VIRTUAL_BASE]
     ldr     x27, [x24, #HDR_PHYS_BASE]
-    /* A payload loaded at the wrong address would scatter the kernel over
-     * unrelated RAM, so refuse rather than guess. */
-    cmp     x27, x24
+    /* The packer and the plan must agree about where the kernel goes; if they
+     * do not, the segments would land in unrelated RAM. */
+    cmp     x27, x29
     b.ne    fail_payload
 
     mov     x28, x24
@@ -110,14 +112,20 @@ segment_loop:
     ldr     x13, [x10, #16]             /* fileoff */
     ldr     x14, [x10, #24]             /* filesize */
 
-    sub     x15, x11, x26               /* + phys_base = physical destination */
-    add     x15, x15, x27
+    sub     x15, x11, x26               /* + kernel base = physical destination */
+    add     x15, x15, x29
     add     x16, x24, x13               /* payload + fileoff */
     mov     x17, x14                    /* bytes left to copy */
 
 copy_words:
     cmp     x17, #8
     b.lo    copy_bytes
+    /* With the MMU off every access is Device memory, where an unaligned
+     * 8-byte load or store raises an alignment fault instead of splitting.
+     * Anything not already aligned is copied a byte at a time. */
+    orr     x18, x15, x16
+    tst     x18, #7
+    b.ne    copy_bytes
     ldr     x18, [x16], #8
     str     x18, [x15], #8
     sub     x17, x17, #8
@@ -138,8 +146,12 @@ zero_bss:
     b.ls    segment_next
 
 zero_words:
+    /* filesize is rarely a multiple of 8, so this normally starts misaligned
+     * and finishes bytewise; the fault it caused is what proved the point. */
     cmp     x17, #8
     b.lo    zero_bytes
+    tst     x15, #7
+    b.ne    zero_bytes
     str     xzr, [x15], #8
     sub     x17, x17, #8
     b       zero_words
@@ -217,6 +229,7 @@ loader_params:
     .quad 0                             /* stack top */
     .quad 0                             /* kernel entry, physical */
     .quad 0                             /* payload physical address */
+    .quad 0                             /* kernel image physical base */
     .size loader_params, . - loader_params
 
     .balign 16
