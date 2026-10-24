@@ -32,6 +32,11 @@ case "$PROFILE" in
   *) die "unknown ONELINEAGE_XNU_PROFILE '$PROFILE' (use qemu or phone)" ;;
 esac
 
+# Report the exact failing command: without this, a `set -e` exit inside a
+# pipeline shows up only as "Process completed with exit code 1".
+set -E
+trap 'status=$?; printf "error: line %s failed (exit %s): %s\n" "$LINENO" "$status" "$BASH_COMMAND" >&2' ERR
+
 CHECK_ONLY=0
 for argument in "$@"; do
   case "$argument" in
@@ -83,7 +88,12 @@ say "SDK:   $SDK_PATH"
 #   * the Kernel.framework private headers the kernel compiles against come
 #     from a Kernel Debug Kit, not from the SDK, and build.sh downloads the
 #     matching KDK (needs sudo) when it is absent.
-KDK_COUNT="$(find /Library/Developer/KDKs -maxdepth 1 -name '*.kdk' 2>/dev/null | wc -l | tr -d ' ')"
+# `find` on a missing directory exits 1; under `set -o pipefail` that would
+# abort the script with no message, which is exactly how the first CI run died.
+KDK_COUNT=0
+if [[ -d /Library/Developer/KDKs ]]; then
+  KDK_COUNT="$(find /Library/Developer/KDKs -maxdepth 1 -name '*.kdk' -print | wc -l | tr -d ' ')"
+fi
 if [[ "$KDK_COUNT" -eq 0 ]]; then
   say "no Kernel Debug Kit installed; build.sh will download the macOS $MACOS_VERSION KDK (needs sudo)"
 else
@@ -123,12 +133,15 @@ grep -q 'VALID_ARCHS="x86_64 arm64e arm64"' "$DXB/build.sh" \
   || die "could not widen libfirehose_kernel architectures in build.sh"
 
 say "building $KERNEL_CONFIG $ARCH_CONFIG $MACHINE_CONFIG ($PROFILE profile) on macOS $MACOS_VERSION (log: $LOG)"
+# build.sh's exit status is handled explicitly below, so keep the trap quiet here.
+trap - ERR
 set +e
 ( cd "$DXB" && MACOS_VERSION="$MACOS_VERSION" KERNEL_CONFIG="$KERNEL_CONFIG" \
     ARCH_CONFIG="$ARCH_CONFIG" MACHINE_CONFIG="$MACHINE_CONFIG" \
     SWEET_PROFILE_FLAGS="$PROFILE_FLAGS" bash build.sh ) 2>&1 | tee "$LOG"
 STATUS="${PIPESTATUS[0]}"
 set -e
+trap 'status=$?; printf "error: line %s failed (exit %s): %s\n" "$LINENO" "$status" "$BASH_COMMAND" >&2' ERR
 
 # build.sh silently skips a patch it cannot apply, so a kernel can be produced
 # with part of the series missing. Treat that as a failed build, not a warning.
