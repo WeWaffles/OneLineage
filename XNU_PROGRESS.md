@@ -135,27 +135,49 @@ Update it whenever a milestone, blocker, test result, or next action changes.
   - widened `libfirehose_kernel` to plain arm64 in `build.sh`; that target is
     arm64e-only upstream and the `SWEET` kernel is not arm64e.
 
+- **The built kernel now boots, in the job that builds it.** Run `40088041226`
+  assembles the loader, generates the ADT, packs the 10-segment kernel and runs
+  QEMU twice, at EL1 and at EL2. Results:
+  - the loader places all 10 segments and prints `segments placed, entering
+    kernel`, so the handover works with the real image (16 MB payload at
+    `0x41ffc000`, kernel at `0x40000000`, entry at physical `0x4146f488`);
+  - **EL2**: `Undefined Instruction` (ESR `0x0`), so XNU is not an EL2 guest;
+  - **EL1**: about 8 KB of XNU code runs, then `Prefetch Abort` with ESR
+    `0x86000005` (instruction abort, translation fault level 1) at
+    ELR = FAR = `0x41471368`, i.e. it faults fetching its own physical address
+    immediately after translation is enabled.
+- Cause, from `osfmk/arm64/start.s`: `common_start` loads `x22` from
+  `boot_args->virtBase` and uses it to turn physical addresses into kernel
+  virtual ones (`x0 + x22 - x23`), and `arm_vm_init.c` keeps the same pair as
+  `gVirtBase`/`gPhysBase` for every `pa <-> va` conversion. `boot_args.py`
+  writes `virtBase = 0` under a comment claiming arm64 ignores it. It does not:
+  virtBase and physBase together define the kernel's slide, so a zero virtBase
+  makes every converted address wrong and the kernel dies at the first KVA
+  fetch. That comment is the bug, and it is not yet fixed.
+
 ## Current task
 
-The loader is now proven on real QEMU with a stub payload, so the remaining
-gap is the kernel image itself: it exists only as the `xnu-kernel-qemu`
-artifact, and downloading an artifact requires an authenticated GitHub session
-that this work did not have. Everything after that is one command.
+The loader is proven both with a stub on this host and with the real kernel in
+CI. The next defect is in the boot arguments: `virtBase` must be the kernel's
+virtual base, and `physBase` must be the kernel's physical base, because their
+difference is the slide that `start.s` and `arm_vm_init.c` apply everywhere.
+`build_payload` currently masks the kernel's virtual base down to a 32 MB
+boundary, which would corrupt that difference, so the fix spans the packer
+header, `boot_args.py` and the plan.
 
-XNU itself has not run. No XNU instruction has executed on any CPU, and the
-phone remains untouched.
+XNU does run now, briefly: about 8 KB of `start.s` executes before the fault.
+The phone remains untouched.
 
 ## Next tasks, in order
 
-1. Get `xnu-kernel-qemu` off GitHub (download it while signed in, or give the
-   work a valid `gh` login), then pack it with
-   `tools/xnu/build_payload.py` against the generated ADT and run
-   `tools/xnu/qemu_run.py --loader loader.bin --loader-symbols loader.json
-   --execute`. The harness itself is already verified on this host.
-2. Work through whatever the first boot reports. The likeliest early failures
-   are `start.s` expectations about the exception level and the stack, and the
-   ADT properties the platform expert matches on -- all of which are visible on
-   the PL011 before any driver runs.
+1. Fix the slide: carry the kernel's true virtual base through the payload
+   header and into `boot_args.virtBase`, set `physBase` to the kernel's
+   physical base (not the RAM base), and keep segment placement exact so
+   `PA = VA - (virtBase - physBase)` holds for every segment. A test should
+   assert that identity for each segment rather than trusting the two sides.
+2. Re-run the EL1 boot and read the console. With the slide correct, the next
+   failures should be per-subsystem (ADT platform expert, timers, pmap), which
+   is where the adaptation series expects to need work.
 4. Normalize the complete phone RAM and reserved-memory map from sanitized
    facts; do not choose a payload range before this passes overlap checks.
 5. Confirm a usable phone debug route and watchdog behavior.
