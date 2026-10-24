@@ -72,6 +72,40 @@ class XnuToolsTest(unittest.TestCase):
         self.assertEqual(report["architecture"], "arm64")
         self.assertFalse(report["safe_for_phone_execution"])
 
+    def test_ctf_debug_overlay_is_accepted_but_flagged(self):
+        # ctf_insert appends CTF into reserved header padding, so __CTF carries
+        # file bytes but no VM bytes. A real kernel build hits this.
+        text = struct.pack(
+            "<II16s4Q4I", inspect_macho.LC_SEGMENT_64, 72, b"__TEXT\0",
+            0x100000000, 0x1000, 0, 104, 7, 5, 0, 0,
+        )
+        ctf = struct.pack(
+            "<II16s4Q4I", inspect_macho.LC_SEGMENT_64, 72, b"__CTF\0",
+            0x100001000, 0, 104, 64, 1, 1, 0, 0,
+        )
+        header = struct.pack(
+            "<8I", inspect_macho.MH_MAGIC_64, inspect_macho.CPU_TYPE_ARM64,
+            0, inspect_macho.MH_EXECUTE, 2, len(text) + len(ctf), 0, 0,
+        )
+        report = inspect_macho.inspect(header + text + ctf + b"\0" * 64)
+        self.assertEqual(report["debug_overlays"], ["__CTF"])
+
+    def test_mapped_segment_larger_than_its_vm_size_is_rejected(self):
+        text = struct.pack(
+            "<II16s4Q4I", inspect_macho.LC_SEGMENT_64, 72, b"__TEXT\0",
+            0x100000000, 0x1000, 0, 64, 7, 5, 0, 0,
+        )
+        data = struct.pack(
+            "<II16s4Q4I", inspect_macho.LC_SEGMENT_64, 72, b"__DATA\0",
+            0x100001000, 8, 64, 16, 3, 3, 0, 0,
+        )
+        header = struct.pack(
+            "<8I", inspect_macho.MH_MAGIC_64, inspect_macho.CPU_TYPE_ARM64,
+            0, inspect_macho.MH_EXECUTE, 2, len(text) + len(data), 0, 0,
+        )
+        with self.assertRaisesRegex(ValueError, "file size exceeds VM size"):
+            inspect_macho.inspect(header + text + data + b"\0" * 64)
+
     def test_macho_wrong_architecture_is_rejected(self):
         header = struct.pack("<8I", inspect_macho.MH_MAGIC_64, 0x01000007, 0, 2, 0, 0, 0, 0)
         with self.assertRaisesRegex(ValueError, "ARM64"):

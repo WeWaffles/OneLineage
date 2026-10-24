@@ -13,6 +13,11 @@ MH_EXECUTE = 2
 LC_SEGMENT_64 = 0x19
 LC_MAIN = 0x80000028
 
+# Debug data that the XNU link inserts into the image but never maps. Apple's
+# ctf_insert appends CTF to the reserved header padding, so these segments
+# legitimately carry more file bytes than VM bytes. Everything else must fit.
+NON_LOADED_SEGMENTS = frozenset({"__CTF", "__DWARF"})
+
 
 def inspect(data: bytes) -> dict:
     if len(data) < 32:
@@ -30,6 +35,7 @@ def inspect(data: bytes) -> dict:
 
     offset = 32
     segments = []
+    overlays: list[str] = []
     entry_file_offset = None
     for index in range(ncmds):
         if offset + 8 > command_end:
@@ -44,8 +50,10 @@ def inspect(data: bytes) -> dict:
                 "<16s4Q4I", data, offset + 8
             )
             name = raw_name.split(b"\0", 1)[0].decode("ascii", errors="strict")
-            if filesize > vmsize:
+            if filesize > vmsize and name not in NON_LOADED_SEGMENTS:
                 raise ValueError(f"segment {name} file size exceeds VM size")
+            if filesize > vmsize:
+                overlays.append(name)
             if filesize and (fileoff + filesize > len(data)):
                 raise ValueError(f"segment {name} extends past end of file")
             segments.append({
@@ -79,6 +87,9 @@ def inspect(data: bytes) -> dict:
         "load_commands": ncmds,
         "entry_file_offset": entry_file_offset,
         "segments": segments,
+        # Reported rather than hidden: these are debug overlays, not mapped
+        # memory, and the packer drops them because their VM size is zero.
+        "debug_overlays": overlays,
         "safe_for_phone_execution": False,
         "note": "Structural validation only; this does not establish SM-S948U compatibility.",
     }
