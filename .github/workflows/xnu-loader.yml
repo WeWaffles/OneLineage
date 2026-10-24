@@ -41,10 +41,17 @@ jobs:
               TARGET="$CANDIDATE"
               break
             fi
-            echo "  $(tail -n 1 "$LOG" || true)"
+            # Job logs need admin rights, so the reason has to travel as an
+            # annotation or it is invisible from outside the repository UI.
+            MESSAGE="$(head -n 2 "$LOG" | tr '\n' ' ' | sed 's/%/%%/g')"
+            echo "::warning title=clang $CANDIDATE::${MESSAGE}"
           done
           if [[ -z "$TARGET" ]]; then
             echo "::error::no clang target produced an AArch64 ELF object for xnu/loader/loader.S"
+            for LOG in build/xnu/loader.*.log; do
+              echo "--- $LOG"
+              cat "$LOG"
+            done
             exit 1
           fi
           echo "assembled with --target=$TARGET"
@@ -52,12 +59,19 @@ jobs:
           # --max-size is LOADER_RESERVE from qemu_run.py. The symbol checks
           # catch an image that assembled but lost its entry point or its
           # parameter block, which is exactly what a relocation would cause.
-          python3 tools/xnu/extract_elf.py build/xnu/loader.o \
-            --output build/xnu/loader.bin \
-            --json build/xnu/loader.json \
-            --max-size 0x10000 \
-            --require-symbol _start \
-            --require-symbol loader_params
+          if ! OUTPUT="$(python3 tools/xnu/extract_elf.py build/xnu/loader.o \
+              --output build/xnu/loader.bin \
+              --json build/xnu/loader.json \
+              --max-size 0x10000 \
+              --require-symbol _start \
+              --require-symbol loader_params 2>&1)"; then
+            printf '%s\n' "$OUTPUT" >&2
+            while IFS= read -r line; do
+              printf '::error title=extract_elf::%s\n' "${line//%/%%}"
+            done <<< "$OUTPUT"
+            exit 1
+          fi
+          printf '%s\n' "$OUTPUT"
 
           shasum -a 256 build/xnu/loader.bin
           wc -c build/xnu/loader.bin
