@@ -69,7 +69,29 @@ jobs:
           MAKEFLAGS: -k
           # qemu selects the PL011 bootstrap console; phone keeps the panel one.
           ONELINEAGE_XNU_PROFILE: ${{ inputs.profile || 'qemu' }}
-        run: bash xnu/build_xnu.sh
+        run: |
+          # pipefail keeps the script's status through tee; without it the
+          # pipeline would report tee's success and hide a failed build.
+          set -o pipefail
+          mkdir -p build/xnu-build
+          bash xnu/build_xnu.sh 2>&1 | tee build/xnu-build/harness.log
+
+      - name: Surface the failure
+        if: failure()
+        run: |
+          # Annotations are readable on a public repository without signing in,
+          # which is what makes a failed run diagnosable from outside the UI.
+          for LOG in build/xnu-build/harness.log build/xnu-build/build.log; do
+            if [[ -f "$LOG" ]]; then
+              echo "--- $LOG (last error lines) ---"
+              grep -nE "^error:|fatal error|error:|Error [0-9]|does not apply|not found|undefined symbol|No such file" "$LOG" \
+                | tail -n 8 | while IFS= read -r line; do
+                  printf '::error title=%s::%s\n' "$(basename "$LOG")" "${line//\%/%%}"
+                done
+              echo "--- $LOG (tail) ---"
+              tail -n 25 "$LOG"
+            fi
+          done
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -78,6 +100,7 @@ jobs:
           path: |
             build/xnu/
             build/xnu-build/build.log
+            build/xnu-build/harness.log
             build/xnu-build/series-report.json
           if-no-files-found: warn
           retention-days: 7
