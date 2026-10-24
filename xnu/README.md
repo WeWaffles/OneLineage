@@ -137,6 +137,13 @@ runs the same script on a `macos-14` runner and uploads the kernel, build log
 and series report as artifacts. It needs `workflow_dispatch` or a push that
 touches `xnu/**` or `tools/xnu/**`.
 
+The first complete run (2026-10-24, run `40083156740`) finished green in about
+six minutes: the whole series applied, the kernel linked, and the structure
+check accepted it. `xnu-kernel-qemu` (8.7 MiB) holds `build/xnu/`, both logs and
+the series report for seven days. Downloading it needs an authenticated GitHub
+session, so the image has not been inspected on this host — the checks it passed
+are the ones that ran inside the job.
+
 The runner setup matters more than it looks:
 
 - The job pins **Xcode 15.x** (newest installed). Xcode 16's `iig` emits
@@ -162,8 +169,8 @@ The runner setup matters more than it looks:
 | Adaptations apply on top, in order, for each profile | verified (2026-10-24) |
 | `boot_args` offsets match the pinned `boot.h` | verified |
 | Harness plans a non-overlapping `virt` layout | verified (synthetic payload) |
-| Compiles and links | **not run** — needs macOS/Xcode |
-| Reaches an early console line in QEMU | **not run** — needs a kernel and a loader |
+| Compiles and links (`DEVELOPMENT`/`ARM64`/`SWEET`, qemu profile) | verified on `macos-14` (2026-10-24) |
+| Reaches an early console line in QEMU | **not run** — needs the loader |
 | Anything on the SM-S948U | not implemented, not authorized |
 
 ## What the adaptations settled, and what is left
@@ -220,9 +227,13 @@ the harness and a first console line.
 
 Still open before a QEMU run can show kernel output:
 
-1. **A built kernel.** The `DEVELOPMENT`/`ARM64`/`SWEET` build has never run, so
-   the first compile is the next real gate, and the adaptations above have only
-   been proven to apply, not to compile.
+1. **The kernel image, locally.** It exists only as the `xnu-kernel-qemu`
+   artifact from the `macos-14` run; fetching it needs an authenticated GitHub
+   session and none has been used here. `xnu/build_xnu.sh` reproduces it from a
+   Mac in one command.
 2. **The loader image.** Contract above; needs a cross toolchain.
 3. **A real payload.** `qemu_run.py` is exercised here against a synthetic
-   one-segment payload and the generated ADT, not against a built kernel.
+   one-segment payload and the generated ADT, not against a built kernel. Note
+   that a real kernel carries a `__CTF` debug overlay whose file size exceeds
+   its (zero) VM size; the packer drops zero-VM segments, which is why that
+   overlay does not reach the payload.

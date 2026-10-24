@@ -57,7 +57,20 @@ Update it whenever a milestone, blocker, test result, or next action changes.
 - Documented the loader contract (payload header, segment placement, `x0`,
   entry) in `xnu/README.md`. The loader image itself still needs an AArch64
   cross toolchain, which this host does not have.
-- Offline XNU tool tests: 26 passing after the VM harness.
+- Offline XNU tool tests: 30 passing after the VM harness.
+- **The macOS 14 VM built the kernel.** Run `40083156740` on `macos-14` (Xcode
+  15.x, Kernel Debug Kit 13.5 downloaded by `build.sh`) finished green in about
+  six minutes. The harness applied all 18 pinned patches and all 4 adaptations,
+  linked `kernel.Development.SWEET`, and the structure check accepted the
+  result; `xnu-kernel-qemu` (8.7 MiB) holds the kernel, both logs and the
+  series report for seven days. So the series compiles, not just applies.
+- That run also exposed a real bug in my inspector: it rejected the kernel's
+  `__CTF` segment with "file size exceeds VM size". That overlay is normal —
+  Apple's `ctf_insert` appends CTF to the reserved header padding, so the
+  segment carries more file bytes than VM bytes. `inspect_macho.py` now allows
+  a non-loaded debug overlay (`__CTF`, `__DWARF`) and reports it in
+  `debug_overlays` instead of failing; the packer skips zero-VM segments, so
+  the overlay never reaches the payload.
 - Audited the macOS 14 CI VM against the real `darwin-xnu-build` build.sh at the
   pinned commit, and fixed what would have made a run fail or look broken:
   - the preflight required an SDK `mig` and SDK `Kernel.framework` headers.
@@ -75,27 +88,32 @@ Update it whenever a milestone, blocker, test result, or next action changes.
   - confirmed build.sh applies `patches/*.patch` with `git apply` and prints
     `Applying patch: <path>` (so the fail-closed check matches), selects
     `patches/` for macOS 13.5, and needs jq/gum/xcodes/cmake/ninja.
+  - fixed a silent early exit: `find` on a missing `/Library/Developer/KDKs`
+    returns 1, and under `set -o pipefail` that killed the script with no
+    message. The lookup is now guarded, and an `ERR` trap names the failing line
+    and command. A second trap was needed because the build itself tolerates
+    failure so it can report `build.sh`'s status.
+  - widened `libfirehose_kernel` to plain arm64 in `build.sh`; that target is
+    arm64e-only upstream and the `SWEET` kernel is not arm64e.
 
 ## Current task
 
-The source and VM halves are offline-verified, and the macOS 14 CI VM has been
-audited against the pinned build harness. What is missing is a run: dispatching
-it needs the branch pushed to GitHub and a working `gh` login.
+The kernel now exists as a build artifact, and the macOS 14 VM is proven to
+produce it. What is missing is the other half of a QEMU boot: the loader that
+consumes the `ONELXNU` payload, and a local copy of the kernel to pack.
 
-Both halves exist and are offline-verified: the source side (pinned series plus
-four adaptations, applied and reverse-checked for either profile) and the VM
-side (`boot_args` builder plus a `qemu_run.py` that plans `virt` RAM and emits
-the QEMU command). Nothing has been compiled and nothing has been booted: there
-is no kernel image and no loader image.
+Nothing has booted. `qemu_run.py` has only planned layouts against a synthetic
+payload, and the phone remains untouched.
 
 ## Next tasks, in order
 
-1. Run `bash xnu/build_xnu.sh` on macOS, or dispatch the `xnu-build` workflow,
-   and work through the first compile and link failures. Expect the adaptations
-   to need fixes: they have been proven to apply, not to compile.
+1. Fetch the `xnu-kernel-qemu` artifact (needs an authenticated GitHub session)
+   or run `bash xnu/build_xnu.sh` on a Mac, then pack it with
+   `tools/xnu/build_payload.py` against the generated ADT.
 2. Assemble the loader described in `xnu/README.md` with an AArch64 cross
    toolchain, then run `tools/xnu/qemu_run.py --loader ... --execute` for the
-   first identifiable early-console line.
+   first identifiable early-console line. Keeping the loader in a `macos-14` job
+   is the cheap route, since that runner has a toolchain but no QEMU.
 4. Normalize the complete phone RAM and reserved-memory map from sanitized
    facts; do not choose a payload range before this passes overlap checks.
 5. Confirm a usable phone debug route and watchdog behavior.
@@ -119,8 +137,8 @@ Settled by the adaptation series:
 
 Still open:
 
-- Nothing has been compiled, so every claim about the adaptations stops at
-  "applies cleanly".
+- The kernel compiles and links; the adaptations are proven to build, not yet
+  to boot. Nothing has been executed.
 - The loader that consumes the `ONELXNU` payload is specified but not written;
   it needs an AArch64 cross toolchain. Until it exists, `qemu_run.py` only
   plans and prints a command.
