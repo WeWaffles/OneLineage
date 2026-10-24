@@ -19,6 +19,8 @@ import boot_args  # noqa: E402
 import mk_m3q_adt  # noqa: E402
 import inspect_macho  # noqa: E402
 import build_payload  # noqa: E402
+import extract_elf  # noqa: E402
+import loader  # noqa: E402
 import qemu_run  # noqa: E402
 import verify_xnu_series  # noqa: E402
 
@@ -163,6 +165,47 @@ def series_manifest(patches: list[dict], **overrides) -> dict:
 
 def entry(name: str, data: bytes) -> dict:
     return {"name": name, "sha256": verify_xnu_series.sha256_bytes(data), "purpose": "test"}
+
+
+def elf_object(text: bytes, symbols: list[tuple[str, int, int]], *, machine: int = 183,
+               relocations: int = 0) -> bytes:
+    """Minimal AArch64 relocatable object: .text, .symtab, .strtab, .shstrtab."""
+    text_off = 64
+    sym_off = (text_off + len(text) + 7) & ~7
+    strtab = bytearray(b"\0")
+    name_offsets = {}
+    for name, _value, _size in symbols:
+        name_offsets[name] = len(strtab)
+        strtab += name.encode() + b"\0"
+    records = [bytes(24)]
+    for name, value, size in symbols:
+        records.append(struct.pack("<IBBHQQ", name_offsets[name], 0x12, 0, 1, value, size))
+    symtab = b"".join(records)
+    strtab = bytes(strtab)
+    str_off = (sym_off + len(symtab) + 7) & ~7
+    shstr = b"\0.text\0.symtab\0.strtab\0.shstrtab\0.rela.text\0"
+    shstr_off = str_off + len(strtab)
+    rela_off = shstr_off + len(shstr)
+    rela = bytes(24 * relocations)
+    sh_off = (rela_off + len(rela) + 7) & ~7
+    headers = [bytes(64)]
+    headers.append(struct.pack("<IIQQQQIIQQ", 1, 1, 0x6, 0, text_off, len(text), 0, 0, 16, 0))
+    headers.append(struct.pack("<IIQQQQIIQQ", 7, 2, 0, 0, sym_off, len(symtab), 3, 1, 8, 24))
+    headers.append(struct.pack("<IIQQQQIIQQ", 15, 3, 0, 0, str_off, len(strtab), 0, 0, 1, 0))
+    headers.append(struct.pack("<IIQQQQIIQQ", 23, 3, 0, 0, shstr_off, len(shstr), 0, 0, 1, 0))
+    headers.append(struct.pack("<IIQQQQIIQQ", 36, 4, 0, 0, rela_off, len(rela), 2, 1, 8, 24))
+    table = b"".join(headers)
+    ident = b"\x7fELF" + bytes([2, 1, 1, 0]) + bytes(8)
+    header = struct.pack("<16sHHIQQQIHHHHHH", ident, 1, machine, 1, 0, 0, sh_off, 0, 64, 0, 0, 64, 6, 4)
+    blob = bytearray(sh_off + len(table))
+    blob[0:64] = header
+    blob[text_off:text_off + len(text)] = text
+    blob[sym_off:sym_off + len(symtab)] = symtab
+    blob[str_off:str_off + len(strtab)] = strtab
+    blob[shstr_off:shstr_off + len(shstr)] = shstr
+    blob[rela_off:rela_off + len(rela)] = rela
+    blob[sh_off:sh_off + len(table)] = table
+    return bytes(blob)
 
 
 class XnuSeriesTest(unittest.TestCase):
@@ -465,6 +508,184 @@ class XnuQemuPlanTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "authorized"):
             qemu_run.command({**self.plan, "phone_execution_authorized": True},
                              payload_path=Path("payload.bin"), loader_path=Path("loader.bin"))
+
+
+class XnuLoaderImageTest(unittest.TestCase):
+    def setUp(self):
+        self.text = bytes(range(64))
+        self.object = elf_object(
+            self.text, [("_start", 0, 4), ("uart_report", 8, 8), ("loader_params", 16, 48)]
+        )
+
+    def test_extracts_the_section_and_symbol_offsets(self):
+        image, report = extract_elf.extract(self.object)
+        self.assertEqual(image, self.text)
+        self.assertEqual(report["machine"], "aarch64")
+        self.assertEqual(report["symbols"]["loader_params"], {"offset": 16, "size": 48})
+        self.assertEqual(report["size"], len(self.text))
+        self.assertFalse(report["phone_execution_authorized"])
+
+    def test_rejects_a_non_aarch64_object(self):
+        with self.assertRaisesRegex(ValueError, "not AArch64"):
+            extract_elf.extract(elf_object(self.text, [("_start", 0, 4)], machine=62))
+
+    def test_rejects_a_missing_section(self):
+        with self.assertRaisesRegex(ValueError, "no .data section"):
+            extract_elf.extract(self.object, ".data")
+
+    def test_cli_writes_the_image_and_enforces_its_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            obj = work / "loader.o"
+            obj.write_bytes(self.object)
+            out = work / "loader.bin"
+            report = work / "loader.json"
+            base = [sys.executable, str(TOOLS / "extract_elf.py"), str(obj),
+                    "--output", str(out), "--json", str(report)]
+            ok = subprocess.run(base + ["--max-size", "0x10000", "--require-symbol", "loader_params"],
+                                text=True, capture_output=True)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            self.assertEqual(out.read_bytes(), self.text)
+            self.assertIn("loader_params", json.loads(report.read_text(encoding="utf-8"))["symbols"])
+
+            too_small = subprocess.run(base + ["--max-size", "8"], text=True, capture_output=True)
+            self.assertEqual(too_small.returncode, 1)
+            self.assertIn("more than the 8 bytes", too_small.stderr)
+
+            missing = subprocess.run(base + ["--require-symbol", "nope"], text=True, capture_output=True)
+            self.assertEqual(missing.returncode, 1)
+            self.assertIn("does not define nope", missing.stderr)
+
+    def test_rejects_unresolved_relocations(self):
+        # A reference to a global symbol stays a relocation in an object file;
+        # extracted raw, the instruction would carry a zero instead of an
+        # address. The loader uses a local label to avoid that, and this guard
+        # is what notices if it ever stops doing so.
+        with self.assertRaisesRegex(ValueError, "unresolved relocation"):
+            extract_elf.extract(elf_object(
+                self.text, [("_start", 0, 4), ("loader_params", 16, 48)], relocations=1
+            ))
+        image, report = extract_elf.extract(elf_object(
+            self.text, [("_start", 0, 4), ("loader_params", 16, 48)], relocations=0
+        ))
+        self.assertEqual(report["symbols"]["loader_params"]["offset"], 16)
+        self.assertEqual(len(image), len(self.text))
+
+    def test_requires_the_entry_point_at_offset_zero(self):
+        moved = elf_object(self.text, [("_start", 4, 4), ("loader_params", 16, 48)])
+        with self.assertRaisesRegex(ValueError, "first byte"):
+            extract_elf.extract(moved)
+        # without the check the image is still usable, e.g. for inspection
+        image, _report = extract_elf.extract(moved, start=None)
+        self.assertEqual(image, self.text)
+
+
+class XnuLoaderParamsTest(unittest.TestCase):
+    def setUp(self):
+        self.image = bytes(16) + bytes(loader.SIZE) + bytes(16)
+        self.offset = 16
+        self.values = dict(boot_args_phys=0x40020000, stack_top=0x40030000,
+                           entry_phys=0x40001000, payload_phys=0x40000000)
+
+    def test_patch_round_trip_and_idempotence(self):
+        patched = loader.patch(self.image, self.offset, **self.values)
+        values = loader.read(patched, self.offset)
+        self.assertTrue(values["patched"])
+        self.assertEqual(values["magic"], "ONELPARM")
+        self.assertEqual(values["version"], 1)
+        for name, value in self.values.items():
+            self.assertEqual(values[name], value)
+        self.assertEqual(loader.patch(patched, self.offset, **self.values), patched)
+        self.assertEqual(len(patched), len(self.image))
+        # the placeholder magics in loader.S must match this tool
+        source = (ROOT / "xnu" / "loader" / "loader.S").read_text(encoding="utf-8")
+        self.assertIn('becomes "ONELPARM"', source)
+
+    def test_rejects_reuse_for_a_different_boot(self):
+        patched = loader.patch(self.image, self.offset, **self.values)
+        with self.assertRaisesRegex(ValueError, "already patched"):
+            loader.patch(patched, self.offset, **{**self.values, "stack_top": 0x40040000})
+
+    def test_rejects_a_block_that_is_not_the_placeholder(self):
+        dirty = bytearray(self.image)
+        dirty[self.offset + 16] = 0xFF
+        with self.assertRaisesRegex(ValueError, "not the loader's placeholder"):
+            loader.patch(bytes(dirty), self.offset, **self.values)
+
+    def test_rejects_bad_addresses_and_truncation(self):
+        with self.assertRaisesRegex(ValueError, "must be a physical address above zero"):
+            loader.patch(self.image, self.offset, **{**self.values, "entry_phys": 0})
+        with self.assertRaisesRegex(ValueError, "not 0x4000-aligned"):
+            loader.patch(self.image, self.offset, **{**self.values, "payload_phys": 0x40000008})
+        with self.assertRaisesRegex(ValueError, "does not fit"):
+            loader.patch(bytes(16), 16, **self.values)
+
+    def test_summary_is_report_safe(self):
+        report = loader.summarize(loader.patch(self.image, self.offset, **self.values), self.offset)
+        self.assertEqual(report["boot_args_phys"], hex(self.values["boot_args_phys"]))
+        self.assertIs(report["phone_execution_authorized"], False)
+        json.dumps(report)
+
+
+class XnuQemuLoaderRunTest(unittest.TestCase):
+    def setUp(self):
+        manifest = json.loads(
+            (ROOT / "kernel" / "device-hardware" / "sm-s948u-azf1.json").read_text(encoding="utf-8")
+        )
+        self.payload, _report = sample_payload(manifest)
+        self.temp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.temp.name)
+        self.payload_path = self.dir / "payload.bin"
+        self.payload_path.write_bytes(self.payload)
+        self.loader_path = self.dir / "loader.bin"
+        self.loader_path.write_bytes(bytes(8) + bytes(loader.SIZE) + bytes(8))
+        self.symbols_path = self.dir / "loader.json"
+        self.symbols_path.write_text(json.dumps({"symbols": {
+            "_start": {"offset": 0, "size": 4},
+            "loader_params": {"offset": 8, "size": loader.SIZE},
+        }}), encoding="utf-8")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_run_fills_the_parameters_from_the_plan(self):
+        out = self.dir / "loader.patched.bin"
+        plan_path = self.dir / "plan.json"
+        self.assertEqual(qemu_run.main([
+            str(self.payload_path), "--loader", str(self.loader_path),
+            "--loader-symbols", str(self.symbols_path), "--loader-out", str(out),
+            "--boot-plan", str(plan_path),
+        ]), 0)
+        layout = qemu_run.plan(self.payload, loader_size=qemu_run.align(len(self.loader_path.read_bytes()), 0x1000))
+        values = loader.read(out.read_bytes(), 8)
+        self.assertTrue(values["patched"])
+        self.assertEqual(values["boot_args_phys"], layout["boot_args_phys"])
+        self.assertEqual(values["stack_top"], layout["stack_top"])
+        self.assertEqual(values["payload_phys"], layout["payload_phys"])
+        self.assertEqual(
+            values["entry_phys"],
+            layout["kernel_entry"] - layout["virtual_base"] + layout["ram_base"],
+        )
+        written = json.loads(plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(written["loader_params_offset"], 8)
+        self.assertEqual(written["loader_entry_phys"], hex(values["entry_phys"]))
+
+    def test_execute_refuses_an_unpatched_loader(self):
+        with self.assertRaisesRegex(SystemExit, "needs --loader-symbols"):
+            qemu_run.main([str(self.payload_path), "--loader", str(self.loader_path), "--execute"])
+
+    def test_execute_still_refuses_a_missing_loader(self):
+        with self.assertRaisesRegex(SystemExit, "needs a loader image"):
+            qemu_run.main([str(self.payload_path), "--execute"])
+
+    def test_symbol_map_without_the_parameter_block_is_rejected(self):
+        empty = self.dir / "empty.json"
+        empty.write_text(json.dumps({"symbols": {"_start": {"offset": 0, "size": 4}}}), encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "no loader_params"):
+            qemu_run.main([
+                str(self.payload_path), "--loader", str(self.loader_path),
+                "--loader-symbols", str(empty),
+            ])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,75 @@
+name: xnu-loader
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "xnu/loader/**"
+      - "tools/xnu/**"
+      - "tests/test_xnu_tools.py"
+      - ".github/workflows/xnu-loader.yml"
+
+concurrency:
+  group: xnu-loader-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  assemble:
+    # Same image as the kernel build: Xcode's clang can assemble AArch64 but
+    # there is no link step here, so the runner only has to be a Mac.
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Offline tool tests
+        run: python3 tests/test_xnu_tools.py -v
+
+      - name: Assemble the loader
+        run: |
+          set -euo pipefail
+          mkdir -p build/xnu
+          # The image is handed to `-device loader,file=...`, which loads raw
+          # bytes: no linker, no ELF. Assemble to an object, then extract .text
+          # with the stdlib tool. Plain `-c` needs no SDK and no linker.
+          TARGET=""
+          for CANDIDATE in aarch64-none-elf aarch64-elf aarch64-linux-gnu; do
+            LOG="build/xnu/loader.${CANDIDATE}.log"
+            echo "trying --target=$CANDIDATE"
+            if xcrun --sdk macosx clang --target="$CANDIDATE" -c xnu/loader/loader.S \
+                 -o build/xnu/loader.o 2>"$LOG"; then
+              TARGET="$CANDIDATE"
+              break
+            fi
+            echo "  $(tail -n 1 "$LOG" || true)"
+          done
+          if [[ -z "$TARGET" ]]; then
+            echo "::error::no clang target produced an AArch64 ELF object for xnu/loader/loader.S"
+            exit 1
+          fi
+          echo "assembled with --target=$TARGET"
+
+          # --max-size is LOADER_RESERVE from qemu_run.py. The symbol checks
+          # catch an image that assembled but lost its entry point or its
+          # parameter block, which is exactly what a relocation would cause.
+          python3 tools/xnu/extract_elf.py build/xnu/loader.o \
+            --output build/xnu/loader.bin \
+            --json build/xnu/loader.json \
+            --max-size 0x10000 \
+            --require-symbol _start \
+            --require-symbol loader_params
+
+          shasum -a 256 build/xnu/loader.bin
+          wc -c build/xnu/loader.bin
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-loader
+          path: |
+            build/xnu/loader.bin
+            build/xnu/loader.json
+            build/xnu/loader.o
+            build/xnu/loader.*.log
+          if-no-files-found: warn
+          retention-days: 7
