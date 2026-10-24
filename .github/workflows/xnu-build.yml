@@ -76,6 +76,44 @@ jobs:
           mkdir -p build/xnu-build
           bash xnu/build_xnu.sh 2>&1 | tee build/xnu-build/harness.log
 
+      - name: Boot the kernel in QEMU
+        # The kernel only exists here and on a Mac; artifact downloads need a
+        # login, so the first boot happens on the runner that built it.
+        env:
+          # keep going so one run reports every compile failure
+          MAKEFLAGS: -k
+        run: |
+          set -euo pipefail
+          KERNEL="$(ls build/xnu/kernel.* | head -n 1)"
+          echo "kernel: $KERNEL"
+
+          xcrun --sdk macosx clang --target=aarch64-none-elf -c xnu/loader/loader.S \
+            -o build/xnu/loader.o
+          python3 tools/xnu/extract_elf.py build/xnu/loader.o \
+            --output build/xnu/loader.bin --json build/xnu/loader.json \
+            --max-size 0x10000 --require-symbol _start --require-symbol loader_params
+
+          python3 tools/xnu/mk_m3q_adt.py kernel/device-hardware/sm-s948u-azf1.json \
+            build/xnu/m3q.adt
+          python3 tools/xnu/build_payload.py "$KERNEL" build/xnu/m3q.adt \
+            build/xnu/m3q.payload --target qemu
+
+          brew install qemu
+          python3 tools/xnu/qemu_run.py build/xnu/m3q.payload \
+            --loader build/xnu/loader.bin --loader-symbols build/xnu/loader.json \
+            --boot-plan build/xnu/boot-plan.json \
+            --console file:build/xnu/console.log --execute --timeout 30 || true
+
+          echo "--- console ---"
+          cat build/xnu/console.log || echo "(no console output)"
+          # Annotations are readable without signing in; the log is not.
+          while IFS= read -r line; do
+            printf '::notice title=xnu console::%s\n' "${line//%/%%}"
+          done < <(head -n 12 build/xnu/console.log 2>/dev/null || true)
+          if [[ ! -s build/xnu/console.log ]]; then
+            echo "::warning::the guest produced no console output at all"
+          fi
+
       - name: Surface the failure
         if: failure()
         run: |

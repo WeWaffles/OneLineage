@@ -253,6 +253,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--boot-plan", type=Path, help="where to write the boot plan JSON")
     parser.add_argument("--console", default="stdio", help="stdio or file:PATH")
     parser.add_argument("--execute", action="store_true", help="actually start QEMU")
+    parser.add_argument("--timeout", type=float,
+                        help="stop the guest after this many seconds instead of waiting for it to exit")
     args = parser.parse_args(argv)
 
     payload = args.payload.read_bytes()
@@ -313,7 +315,15 @@ def main(argv: list[str] | None = None) -> int:
     argv = command(layout, payload_path=args.payload, loader_path=boot_path,
                    boot_args_path=boot_args_path, qemu=qemu, console=args.console)
     print("running: " + " ".join(argv))
-    return subprocess.run(argv, text=True).returncode
+    if args.timeout is None:
+        return subprocess.run(argv, text=True).returncode
+    # A kernel that faults, or a stub that halts in wfi, never exits on its
+    # own; the timeout is what ends a boot attempt.
+    try:
+        return subprocess.run(argv, text=True, timeout=args.timeout).returncode
+    except subprocess.TimeoutExpired:
+        print(f"guest still running after {args.timeout:g}s; stopped")
+        return 0
 
 
 if __name__ == "__main__":
