@@ -1,0 +1,167 @@
+--- a/pexpert/pexpert/arm64/SWEET.h
++++ b/pexpert/pexpert/arm64/SWEET.h
+@@ -40,11 +40,27 @@
+  * reachable from a kernel VA once TTBR0 is gone. All three have to agree, so
+  * the address, the geometry and the memory attributes live here.
+  *
+- * The phone build draws text into the panel framebuffer. start.s maps the
+- * console as a single 32MB block descriptor in the first bootstrap L2 table,
+- * which covers one 64GB L1 entry in 2048 blocks, so a replacement address has
+- * to land in that same table.
++ * The phone build draws text into the panel framebuffer. start.s installs
++ * exactly one 32MB block descriptor for this address, so any replacement has
++ * to stay inside the same 16K-granule L1 entry (64GB) and the same
++ * 32MB-aligned L2 block.
+  */
++#if defined(SWEET_QEMU_PROFILE)
++/*
++ * QEMU virt profile. The machine has no panel, so the console is the PL011
++ * UART at 0x09000000. It is not in the same 32MB block as the panel address,
++ * but it is block 4 of the same first L2 table, so start.s reaches it with the
++ * descriptor it already installs. UART registers are Device memory, so the
++ * attributes change from Normal Non-Cacheable to Device-nGnRnE.
++ */
++#define SWEET_EARLY_CONSOLE_PL011    1
++#if defined(ASSEMBLER)
++#define SWEET_EARLY_CONSOLE_PHYS     0x09000000
++#else
++#define SWEET_EARLY_CONSOLE_PHYS     0x09000000ULL
++#endif
++#define SWEET_EARLY_CONSOLE_ATTRINDX CACHE_ATTRINDX_DISABLE
++#else
+ #if defined(ASSEMBLER)
+ #define SWEET_EARLY_CONSOLE_PHYS   0x9c000000
+ #else
+@@ -56,6 +72,7 @@
+ #define SWEET_EARLY_FB_STRIDE      4320
+ /* Pixels of stage-marker band drawn along the bottom edge of the panel. */
+ #define SWEET_EARLY_MARK_BAND      32
++#endif /* SWEET_QEMU_PROFILE */
+ 
+ /*
+  * Qualcomm numbers the architected timer PPIs 1/2/3/0 (secure phys, phys,
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -463,7 +463,7 @@
+ 	mov		x20, x0
+ 	mov		x21, #0
+ 
+-#if defined(SWEET)
++#if defined(SWEET) && !defined(SWEET_EARLY_CONSOLE_PL011)
+ 	/* Stage 0: white 64x32 band, no stack or page tables needed. */
+ 	MOV64	x0, (SWEET_EARLY_CONSOLE_PHYS + (SWEET_EARLY_FB_HEIGHT - SWEET_EARLY_MARK_BAND) * SWEET_EARLY_FB_STRIDE)
+ 	mov		w1, #-1
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -1,9 +1,12 @@
+ /*
+  * Redmi Note 10 Pro bootstrap console. No allocation, locks, ADT parsing or
+  * per-CPU state: panic() can reach this before a current thread exists.
+- * start.s maps the splash framebuffer VA=PA as Normal Non-Cacheable memory.
++ * start.s maps the console block VA=PA as Normal Non-Cacheable memory.
+  * arm_vm_init installs a reserved kernel VA alias before removing TTBR0;
+  * retain this console until the normal framebuffer serial console is ready.
++ *
++ * A QEMU profile swaps the panel for the PL011 UART described by
++ * SWEET_EARLY_CONSOLE_PHYS, which start.s maps Device-nGnRnE instead.
+  */
+ #include <arm64/sweet_early.h>
+ 
+@@ -11,6 +14,43 @@
+ #include <stdint.h>
+ #include <kern/misc_protos.h>
+ 
++/* Initialized data must remain writable until disable, including panics. */
++static unsigned int early_disabled, early_panicking;
++
++#if defined(SWEET_EARLY_CONSOLE_PL011)
++/*
++ * QEMU virt profile. The emulated PL011 needs no baud or flow-control setup
++ * at this stage: wait for room in the transmit FIFO and store the byte. The
++ * register block is mapped Device-nGnRnE, so the accesses stay ordered.
++ */
++#define PL011_DR               0x00u
++#define PL011_FR               0x18u
++#define PL011_FR_TXFF          (1u << 5)
++
++static volatile uint8_t *early_uart =
++    (volatile uint8_t *)(uintptr_t)SWEET_EARLY_CONSOLE_PHYS;
++
++static void
++sweet_early_emit(char c)
++{
++	while (early_uart[PL011_FR] & PL011_FR_TXFF) {
++		/* the FIFO drains at the emulated baud rate */
++	}
++	early_uart[PL011_DR] = (uint8_t)c;
++}
++
++void
++sweet_early_putc(char c)
++{
++	if (early_disabled) {
++		return;
++	}
++	if (c == '\n') {
++		sweet_early_emit('\r');
++	}
++	sweet_early_emit(c);
++}
++#else
+ static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)SWEET_EARLY_CONSOLE_PHYS;
+ #define EARLY_FB early_fb
+ #define EARLY_WIDTH ((uint32_t)SWEET_EARLY_FB_WIDTH)
+@@ -22,11 +62,10 @@
+ #define EARLY_ROWS ((EARLY_HEIGHT - (uint32_t)SWEET_EARLY_MARK_BAND) / EARLY_CELL_H)
+ #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
+ 
+-extern unsigned char iso_font[256 * 16];
+-
+-/* Initialized data must remain writable until disable, including panics. */
+ static unsigned int early_row, early_col;
+-static unsigned int early_started, early_disabled, early_panicking;
++static unsigned int early_started;
++
++extern unsigned char iso_font[256 * 16];
+ 
+ static void
+ sweet_early_clear_row(void)
+@@ -77,6 +116,7 @@
+ 	}
+ 	early_col++;
+ }
++#endif /* SWEET_EARLY_CONSOLE_PL011 */
+ 
+ static void
+ sweet_early_string(const char *s)
+@@ -92,6 +132,7 @@
+ 	if (early_disabled || stage > 20) {
+ 		return;
+ 	}
++#if !defined(SWEET_EARLY_CONSOLE_PL011)
+ 	uint32_t color = 0xff00ff00u | ((stage & 7u) * 32u << 16);
+ 	for (unsigned int y = EARLY_HEIGHT - SWEET_EARLY_MARK_BAND; y < EARLY_HEIGHT; y++) {
+ 		for (unsigned int x = stage * 48; x < (stage + 1) * 48; x++) {
+@@ -99,6 +140,7 @@
+ 		}
+ 	}
+ 	__asm__ volatile("dsb sy" ::: "memory");
++#endif
+ 	sweet_early_string("SWEET EARLY ");
+ 	if (stage >= 10) {
+ 		sweet_early_putc((char)('0' + stage / 10));
+@@ -129,9 +171,13 @@
+ sweet_early_relocate(uint64_t base)
+ {
+ 	sweet_early_mark(8, "leaving bootstrap TTBR0");
++#if defined(SWEET_EARLY_CONSOLE_PL011)
++	early_uart = (volatile uint8_t *)(uintptr_t)base;
++#else
+ 	early_fb = (volatile uint32_t *)(uintptr_t)base;
++#endif
+ 	__asm__ volatile("dsb sy" ::: "memory");
+-	sweet_early_mark(9, "kernel framebuffer VA live");
++	sweet_early_mark(9, "kernel console VA live");
+ }
+ 
+ void

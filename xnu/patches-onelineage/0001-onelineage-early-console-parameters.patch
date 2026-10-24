@@ -1,0 +1,117 @@
+--- a/pexpert/pexpert/arm64/SWEET.h
++++ b/pexpert/pexpert/arm64/SWEET.h
+@@ -35,6 +35,29 @@
+ #endif /* ! ASSEMBLER */
+ 
+ /*
++ * Bootstrap console block. start.s installs the bootstrap mapping for it,
++ * sweet_early.c writes to it before IOKit exists, and arm_vm_init keeps it
++ * reachable from a kernel VA once TTBR0 is gone. All three have to agree, so
++ * the address, the geometry and the memory attributes live here.
++ *
++ * The phone build draws text into the panel framebuffer. start.s maps the
++ * console as a single 32MB block descriptor in the first bootstrap L2 table,
++ * which covers one 64GB L1 entry in 2048 blocks, so a replacement address has
++ * to land in that same table.
++ */
++#if defined(ASSEMBLER)
++#define SWEET_EARLY_CONSOLE_PHYS   0x9c000000
++#else
++#define SWEET_EARLY_CONSOLE_PHYS   0x9c000000ULL
++#endif
++#define SWEET_EARLY_CONSOLE_ATTRINDX  CACHE_ATTRINDX_WRITECOMB
++#define SWEET_EARLY_FB_WIDTH       1080
++#define SWEET_EARLY_FB_HEIGHT      2400
++#define SWEET_EARLY_FB_STRIDE      4320
++/* Pixels of stage-marker band drawn along the bottom edge of the panel. */
++#define SWEET_EARLY_MARK_BAND      32
++
++/*
+  * Qualcomm numbers the architected timer PPIs 1/2/3/0 (secure phys, phys,
+  * virt, hyp) instead of the usual 13/14/11/10: the virtual timer XNU uses
+  * (CNTV) is INTID 16 + 3 = 19.
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -465,10 +465,10 @@
+ 
+ #if defined(SWEET)
+ 	/* Stage 0: white 64x32 band, no stack or page tables needed. */
+-	MOV64	x0, (0x9c000000 + 2368 * 4320)
++	MOV64	x0, (SWEET_EARLY_CONSOLE_PHYS + (SWEET_EARLY_FB_HEIGHT - SWEET_EARLY_MARK_BAND) * SWEET_EARLY_FB_STRIDE)
+ 	mov		w1, #-1
+-	mov		x2, #32
+-	mov		x4, #4320
++	mov		x2, #SWEET_EARLY_MARK_BAND
++	mov		x4, #SWEET_EARLY_FB_STRIDE
+ Lsweet_mark_row:
+ 	mov		x3, #64
+ 	mov		x5, x0
+@@ -630,14 +630,18 @@
+ 
+ #if defined(SWEET)
+ 	/*
+-	 * Splash framebuffer: one 32MB Normal-NC block in the EXISTING V=P
+-	 * L2 table. Both framebuffer and RAM use L1 index 0; another call to
++	 * Bootstrap console block: one 32MB descriptor in the EXISTING V=P
++	 * L2 table. Both the console and RAM use L1 index 0; another call to
+ 	 * create_bootstrap_mapping would replace the RAM L2 table.
+ 	 * SWEET uses 16K pages and all bring-up RAM is below 4GB, so the first
+ 	 * V=P L2 page is bootstrap_pagetables + 2*PGBYTES.
++	 *
++	 * The descriptor is installed unconditionally: on the phone it covers the
++	 * splash framebuffer, and a profile that moves the console into UART MMIO
++	 * still needs the mapping before any C code runs.
+ 	 */
+-	MOV64	x10, 0x9c000000
+-	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
++	MOV64	x10, SWEET_EARLY_CONSOLE_PHYS
++	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(SWEET_EARLY_CONSOLE_ATTRINDX) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
+ 	orr		x11, x11, x10
+ 	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
+ 	lsr		x12, x12, #(ARM_TT_L2_SHIFT)
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1843,9 +1843,9 @@
+ 	tt_entry_t *l2 = (tt_entry_t *)phystokv(l1 & ARM_TTE_TABLE_MASK);
+ 	tt_entry_t *slot = &l2[(va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT];
+ 	assert(*slot == ARM_TTE_EMPTY);
+-	*slot = 0x9c000000ULL | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
++	*slot = SWEET_EARLY_CONSOLE_PHYS | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
+ 	    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
+-	    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) |
++	    ARM_TTE_BLOCK_ATTRINDX(SWEET_EARLY_CONSOLE_ATTRINDX) |
+ 	    ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX;
+ 	__asm__ volatile("dsb ishst" ::: "memory");
+ }
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -11,15 +11,15 @@
+ #include <stdint.h>
+ #include <kern/misc_protos.h>
+ 
+-static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
++static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)SWEET_EARLY_CONSOLE_PHYS;
+ #define EARLY_FB early_fb
+-#define EARLY_WIDTH 1080u
+-#define EARLY_HEIGHT 2400u
+-#define EARLY_STRIDE (4320u / 4)
++#define EARLY_WIDTH ((uint32_t)SWEET_EARLY_FB_WIDTH)
++#define EARLY_HEIGHT ((uint32_t)SWEET_EARLY_FB_HEIGHT)
++#define EARLY_STRIDE ((uint32_t)SWEET_EARLY_FB_STRIDE / 4u)
+ #define EARLY_SCALE 2u
+ #define EARLY_CELL_W (8u * EARLY_SCALE)
+ #define EARLY_CELL_H (16u * EARLY_SCALE)
+-#define EARLY_ROWS ((EARLY_HEIGHT - 32u) / EARLY_CELL_H)
++#define EARLY_ROWS ((EARLY_HEIGHT - (uint32_t)SWEET_EARLY_MARK_BAND) / EARLY_CELL_H)
+ #define EARLY_COLS (EARLY_WIDTH / EARLY_CELL_W)
+ 
+ extern unsigned char iso_font[256 * 16];
+@@ -93,7 +93,7 @@
+ 		return;
+ 	}
+ 	uint32_t color = 0xff00ff00u | ((stage & 7u) * 32u << 16);
+-	for (unsigned int y = EARLY_HEIGHT - 32; y < EARLY_HEIGHT; y++) {
++	for (unsigned int y = EARLY_HEIGHT - SWEET_EARLY_MARK_BAND; y < EARLY_HEIGHT; y++) {
+ 		for (unsigned int x = stage * 48; x < (stage + 1) * 48; x++) {
+ 			EARLY_FB[y * EARLY_STRIDE + x] = color;
+ 		}

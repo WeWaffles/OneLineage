@@ -1,0 +1,12 @@
+# Patch bytes are load-bearing: xnu/series.json pins a SHA-256 per patch and
+# `git apply` matches context exactly. Never let git normalise line endings in
+# them, or a Windows checkout silently breaks the pinned series.
+*.patch -text
+
+# Scripts and sources are LF everywhere; CRLF shell scripts do not run on the
+# macOS builder and CRLF Python trips the project's formatting expectations.
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.json text eol=lf

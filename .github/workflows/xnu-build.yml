@@ -1,0 +1,83 @@
+name: xnu-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "OneLineage build profile"
+        type: choice
+        default: qemu
+        options:
+          - qemu
+          - phone
+  push:
+    paths:
+      - "xnu/**"
+      - "tools/xnu/**"
+      - "tests/test_xnu_tools.py"
+      - ".github/workflows/xnu-build.yml"
+
+concurrency:
+  group: xnu-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macOS 14 still ships Xcode 15.x: its iig matches the xnu-8796 IORPC ABI
+    # (Xcode 16's iig emits IORPC.kernelContent, which this xnu lacks).
+    runs-on: macos-14
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Offline tool tests
+        run: python3 tests/test_xnu_tools.py -v
+
+      - name: Dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          brew install jq gum bash cmake ninja
+          # build.sh only checks that xcodes exists; Xcode is preinstalled and
+          # the real xcodes would try to manage installations.
+          printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/local/bin/xcodes >/dev/null
+          sudo chmod +x /usr/local/bin/xcodes
+          # XNU-8796 needs Xcode 15.x: Xcode 16's iig emits IORPC.kernelContent
+          # for an IORPC ABI this xnu does not have. Take the newest 15.x.
+          XC="$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)"
+          if [[ -z "$XC" ]]; then
+            echo "::error::no Xcode 15.x on this image; XNU-8796 cannot be built with Xcode 16's iig"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          echo "Using $XC"
+          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+          xcrun --find iig
+          xcrun --sdk macosx --find mig || echo "no SDK mig; build.sh builds one from bootstrap_cmds"
+
+      - name: Preflight
+        env:
+          ONELINEAGE_XNU_PROFILE: ${{ inputs.profile || 'qemu' }}
+        run: bash xnu/build_xnu.sh --check
+
+      - name: Build the pinned kernel
+        env:
+          # keep going so one run reports every compile failure
+          MAKEFLAGS: -k
+          # qemu selects the PL011 bootstrap console; phone keeps the panel one.
+          ONELINEAGE_XNU_PROFILE: ${{ inputs.profile || 'qemu' }}
+        run: bash xnu/build_xnu.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xnu-kernel-${{ inputs.profile || 'qemu' }}
+          path: |
+            build/xnu/
+            build/xnu-build/build.log
+            build/xnu-build/series-report.json
+          if-no-files-found: warn
+          retention-days: 7

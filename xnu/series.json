@@ -1,0 +1,165 @@
+{
+  "schema": 1,
+  "milestone": "xnu-early-console-qemu",
+  "source": {
+    "project": "xnu",
+    "release": "macOS 13.5 (XNU-8796 generation, iOS 16 era)",
+    "tag": "xnu-8796.141.3",
+    "url": "https://codeload.github.com/apple-oss-distributions/xnu/tar.gz/refs/tags/xnu-8796.141.3",
+    "sha256": "f08bfe045a1fb552a6cbf7450feae6a35dd003e9979edf71ea77d1a836c8dc99",
+    "pinned_via": "https://raw.githubusercontent.com/apple-oss-distributions/distribution-macOS/macos-135/release.json"
+  },
+  "origin": {
+    "repo": "https://github.com/dipa-studio/ios-sweet",
+    "commit": "45263bee51df4a0f55cdf9c649af886399488ddb",
+    "path": "xnu/patches",
+    "license": "MIT",
+    "license_file": "tools/xnu/LICENSE.ios-sweet"
+  },
+  "build": {
+    "dxb_repo": "https://github.com/blacktop/darwin-xnu-build",
+    "dxb_sha": "663906528d1cd5ea8fde7de6f16de73db9511549",
+    "macos_version": "13.5",
+    "kernel_config": "DEVELOPMENT",
+    "arch_config": "ARM64",
+    "machine_config": "SWEET",
+    "host": "macOS with Xcode and Kernel.framework headers"
+  },
+  "patches": [
+    {
+      "name": "0001-new-clang-drop-removed-auto-var-init-flag.patch",
+      "sha256": "c057dea49d5bcccbc7d317d60f91cc8062689fd26d3d739f709e279bddb56a1c",
+      "purpose": "build: drop the clang flag current toolchains no longer accept"
+    },
+    {
+      "name": "0002-new-clang-backport-UIO_STACKBUF.patch",
+      "sha256": "19f7571eb90608ef66f1d8cf9dee5333d4fbbccbfeee9ea244b90cb4a4240727",
+      "purpose": "build: backport UIO_STACKBUF so newer SDK headers compile"
+    },
+    {
+      "name": "0003-sweet-framebuffer-serial-console.patch",
+      "sha256": "ff08f768b0e7d830efd1cab98b8cb18e66c60935c4b640e74146e5c1cbb5371c",
+      "purpose": "early serial output: framebuffer-backed pe_serial for boards without a usable UART"
+    },
+    {
+      "name": "0004-sweet-machine-config.patch",
+      "sha256": "b18a77a0b994871937a0b4138906f9f1693153c61eca6e598018271360ad5432",
+      "purpose": "non-Apple machine config: register SWEET and add its board config, start and sleh hooks"
+    },
+    {
+      "name": "0005-non-pac-build-fixes.patch",
+      "sha256": "b84deb9b9e5b8426aca7b713c3c5b5829e4e22354dd86d64329f14b15704d58c",
+      "purpose": "build: non-PAC arm64 corrections in the pmap headers"
+    },
+    {
+      "name": "0006-sweet-master-config-open-source-asm-pmap.patch",
+      "sha256": "c7cf993c8362a689371f2b819903792be2deb5032e9ea7edc20a4abd627e233f",
+      "purpose": "config: MASTER.arm64.sweet built from the open-source asm and pmap instead of closed libs"
+    },
+    {
+      "name": "0007-sweet-stub-apple-internal-headers.patch",
+      "sha256": "8c8e43ac50591a2c6e4f1c1bff4edeb1935f8e02b28db50596f3be9a3a80c8e5",
+      "purpose": "build: stub Apple-internal headers and symbols absent from the open tree"
+    },
+    {
+      "name": "0008-sweet-fill-closed-lib-gaps-kpc-stub.patch",
+      "sha256": "4a959eeac46696c08fe826a0d0a7d602c0767f5f92bf28bd641e5c6fb5a7d452",
+      "purpose": "build: fill closed-library gaps, including an inert kpc stub with no hardware counters"
+    },
+    {
+      "name": "0009-sweet-drop-apple-soc-only-exports.patch",
+      "sha256": "07ed88210debc8395944e1fafd1771abd5935f31ebae620ff8f15fd96d9a810e",
+      "purpose": "link: drop Apple-SoC-only entries from the kernel export tables"
+    },
+    {
+      "name": "0010-sweet-early-framebuffer-debug.patch",
+      "sha256": "bdc940de4f8d51b0d254b89e54036dcbfd1e33baaaa13267ae2b9ad980046c5a",
+      "purpose": "early serial output: memory-mapped early debug console before IOKit exists"
+    },
+    {
+      "name": "0011-sweet-physmap-alignment-padding.patch",
+      "sha256": "4c1c2d3f82222a8182060ffd5f681905c20d9232ec972001daa8c25b21ada520",
+      "purpose": "vm: physmap alignment padding for a non-Apple memory layout"
+    },
+    {
+      "name": "0012-sweet-keep-debug-console-after-ttbr0.patch",
+      "sha256": "6e5f5e04b940f2c35e17f97df480784459a922e8fc40b8c75b637325c35a474f",
+      "purpose": "early serial output: keep the debug console writable after the TTBR0 switch"
+    },
+    {
+      "name": "0013-sweet-kmem-rng-without-corecrypto.patch",
+      "sha256": "12132c39435479e546d1ce4e24622d2ad145c8eb6274293b690ea5e1e58d9f91",
+      "purpose": "vm: seed kernel RNG without Apple CoreCrypto"
+    },
+    {
+      "name": "0014-sweet-kernel-hmac-prng.patch",
+      "sha256": "04d13bf3c6c2e23c95c55677a6aa8f1e5c69971d8615eee7d0f05ba9d6963237",
+      "purpose": "prng: software HMAC PRNG so entropy works without Apple crypto services"
+    },
+    {
+      "name": "0015-sweet-unavailable-trust-cache-runtime.patch",
+      "sha256": "52c922333707deb9f9e697cf5ba092213dcb578f36ca209e750582a650b1eb18",
+      "purpose": "security: tolerate the missing Apple trust-cache runtime"
+    },
+    {
+      "name": "0016-sweet-device-tree-platform-expert.patch",
+      "sha256": "b71c0fc56d832537a6ca096a3fe4893c498c234adb4fde419e1a791de74172ab",
+      "purpose": "platform expert: device-tree platform expert matched on the 'xiaomi,sweet' node"
+    },
+    {
+      "name": "0017-sweet-device-tree-virtual-timer-irq.patch",
+      "sha256": "b3b561af3354f8c1297a084c8025c282d28aeb0d4e14758d6d63bdc81cd0bd50",
+      "purpose": "interrupts: route the generic virtual timer interrupt through pe_fiq"
+    },
+    {
+      "name": "0018-sweet-boot-cpu-driver.patch",
+      "sha256": "06de6e84d8ff9b0307872fb78a827e84fc1e16a1b7286a87f0e618a5dc2692a9",
+      "purpose": "cpus: single-CPU IOCPU bring-up over the legacy IOCPU interface"
+    }
+  ],
+  "adaptations": {
+    "directory": "xnu/patches-onelineage",
+    "description": "OneLineage's own changes on top of the vendored ios-sweet prefix. Each one is derived from the patched source, not guessed: they parameterise the constants that were hardcoded for the phone panel and give the platform expert an identity this project controls.",
+    "patches": [
+      {
+        "name": "0001-onelineage-early-console-parameters.patch",
+        "sha256": "ea4c7d2138936428071316be0c637e86107161403897b55d324dc66221468278",
+        "purpose": "console: move the bootstrap console address, panel geometry and block attributes into SWEET.h so start.s, arm_vm_init and sweet_early.c cannot disagree",
+        "applies": "always"
+      },
+      {
+        "name": "0002-onelineage-pl011-early-console.patch",
+        "sha256": "1cfe329984fa081aa98901b40192d656dc1146e30a45d036103f8dcf75ff5667",
+        "purpose": "console: PL011 backend for SWEET_QEMU_PROFILE, mapped Device-nGnRnE, with the panel band and pixel path compiled out",
+        "applies": "always"
+      },
+      {
+        "name": "0003-onelineage-platform-expert-identity.patch",
+        "sha256": "79ef47194e61f262c709e805bead17832cba8fe5a5132ad6944a7fc33f8fdd37",
+        "purpose": "platform expert: match the 'onelineage,platform' compatible this project's ADT always publishes instead of one board's vendor strings",
+        "applies": "always"
+      },
+      {
+        "name": "0004-onelineage-sweet-profile-flags.patch",
+        "sha256": "3c40f1f8f874e57328c0d98c38ec9d1e92d0143f3e67aa36f40f7f86eb4a44c2",
+        "purpose": "build: SWEET_PROFILE_FLAGS hook so a QEMU build adds -DSWEET_QEMU_PROFILE without a second machine config",
+        "applies": "qemu"
+      }
+    ]
+  },
+  "verified": {
+    "applies_to_pinned_source": true,
+    "compiled": false,
+    "linked": false,
+    "qemu_console_reached": false
+  },
+  "constraints": {
+    "phone_execution_authorized": false,
+    "notes": [
+      "The series stops before ios-sweet's filesystem, AMFI, USB, input, display and SMP work; those are later milestones.",
+      "A clean apply proves text-level composition against the pinned tag only. It says nothing about compiling, linking, booting, or the phone.",
+      "The platform expert matches 'onelineage,platform' after 0003; mk_m3q_adt.py publishes it in the ADT root node, and a test keeps the two in agreement.",
+      "A QEMU build must pass SWEET_PROFILE_FLAGS=-DSWEET_QEMU_PROFILE, otherwise the kernel is the phone configuration and writes its bootstrap console to panel MMIO that QEMU does not have."
+    ]
+  }
+}

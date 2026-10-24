@@ -1,0 +1,60 @@
+{
+  "device": "SM-S948U",
+  "board": "m3q",
+  "soc": "qcom,canoe",
+  "source": "sanitized facts from the live flattened device tree",
+  "cpu": {
+    "count": 8,
+    "enable_method": "psci",
+    "mpidr_affinities": [
+      "0x00000",
+      "0x00100",
+      "0x00200",
+      "0x00300",
+      "0x00400",
+      "0x00500",
+      "0x10000",
+      "0x10100"
+    ]
+  },
+  "psci": {
+    "compatible": "arm,psci-1.0",
+    "method": "smc"
+  },
+  "timer": {
+    "compatible": "arm,armv8-timer",
+    "frequency_hz": 19200000,
+    "ppi_ids": [29, 30, 27, 26]
+  },
+  "gic": {
+    "compatible": "arm,gic-v3",
+    "distributor_base": "0x17000000",
+    "distributor_size": "0x10000",
+    "redistributor_base": "0x17080000",
+    "redistributor_size": "0x200000",
+    "redistributor_stride": "0x40000",
+    "its_base": "0x17040000",
+    "its_size": "0x20000"
+  },
+  "ufs": {
+    "compatible": "qcom,ufshc",
+    "controller_base": "0x01d84000",
+    "controller_size": "0x3000",
+    "ice_base": "0x01d88000",
+    "ice_size": "0x18000",
+    "interrupt_spi": 265,
+    "lanes_per_direction": 2
+  },
+  "debug_uart": {
+    "path": "/soc/qcom,qupv3_1_geni_se@ac0000/qcom,qup_uart@a9c000",
+    "base": "0x00a9c000",
+    "baud": 115200,
+    "availability_for_xnu": "unverified"
+  },
+  "handoff_status": {
+    "ram_map": "captured but not yet normalized against all reserved-memory nodes",
+    "framebuffer": "no reusable simple-framebuffer node identified",
+    "safe_payload_region": "not selected",
+    "execution_authorized": false
+  }
+}

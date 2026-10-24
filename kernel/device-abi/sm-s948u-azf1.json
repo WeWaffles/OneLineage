@@ -1,0 +1,21 @@
+{
+  "device": "SM-S948U",
+  "build": "S948USQS3AZF1",
+  "kernel_release": "6.12.30-android16-5-pd30ff70-abogkiS948USQS3AZF1-4k",
+  "vermagic": "6.12.30-android16-5-pd30ff70-abogkiS948USQS3AZF1-4k SMP preempt mod_unload modversions aarch64",
+  "module_layout_crc": "0xe976b219",
+  "exact_source_available": false,
+  "runtime_status": "blocked: reconstructed probe loaded but appeared permanent and could not unload",
+  "available_older_source": {
+    "model_target": "m3q_usa_singlew",
+    "chipset": "canoe",
+    "build": "S948USQU1AZAB",
+    "kernel_version": "6.12.30",
+    "natural_module_layout_crc_with_live_config": "0xce58de89",
+    "matches_running_module_layout_crc": false
+  },
+  "allowed_imports": [
+    "module_layout"
+  ],
+  "source": "Observed from the running device and Samsung-shipped abc_hub.ko"
+}
