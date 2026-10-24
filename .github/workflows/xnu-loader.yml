@@ -72,9 +72,11 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$OUTPUT"
-
-          shasum -a 256 build/xnu/loader.bin
-          wc -c build/xnu/loader.bin
+          # The size, hash and symbol offsets go out as annotations too: the job
+          # log needs admin rights, and these are what a boot needs to check.
+          while IFS= read -r line; do
+            printf '::notice title=loader::%s\n' "${line//%/%%}"
+          done <<< "$OUTPUT"
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -170,7 +170,9 @@ The runner setup matters more than it looks:
 | `boot_args` offsets match the pinned `boot.h` | verified |
 | Harness plans a non-overlapping `virt` layout | verified (synthetic payload) |
 | Compiles and links (`DEVELOPMENT`/`ARM64`/`SWEET`, qemu profile) | verified on `macos-14` (2026-10-24) |
-| Reaches an early console line in QEMU | **not run** — needs the loader |
+| Loader assembles, has no relocations, and fits its reserve | verified on `macos-14` (2026-10-24) |
+| Loader parameters are filled from the boot plan | verified (offline) |
+| Reaches an early console line in QEMU | **not run** — needs a QEMU host |
 | Anything on the SM-S948U | not implemented, not authorized |
 
 ## What the adaptations settled, and what is left
@@ -204,26 +206,54 @@ python tools/xnu/qemu_run.py build/m3q-qemu.payload \
 
 Without `--loader` it prints the plan and stops. With `--loader` it prints the
 command. With `--execute` it starts QEMU, and only if `qemu-system-aarch64` is
-installed. `--console file:console.log` captures the PL011 output instead of
-using stdio; `-display none` means there is no framebuffer to inspect.
+installed, and only once the loader has been given its parameters. `--console
+file:console.log` captures the PL011 output instead of using stdio; `-display
+none` means there is no framebuffer to inspect.
 
-### Loader contract
+### The loader
 
-QEMU enters the loader at `loader_addr` with `cpu-num=0`; the address comes from
-the boot plan. The loader must:
+`xnu/loader/loader.S` is the image QEMU enters at `loader_addr`. It:
 
-1. Read the `ONELXNU` header at `payload_phys`: magic `ONELXNU\0`, version 1,
-   segment count, then `virtual_base`, `entry`, `tree_offset`, `tree_size`,
-   `kernel_end`, `phys_base`, `mem_size`, the command line and the segment
-   table of `(vmaddr, vmsize, fileoff, filesize)` entries.
-2. Place each segment at `vmaddr - virtual_base + phys_base`.
-3. Put `boot_args_phys` (from the boot plan, or the `--boot-args` file) in `x0`,
-   set up the stack the way `osfmk/arm64/start.s` expects, and branch to
-   `entry`.
+1. reads its own 48-byte `loader_params` block and refuses to run unpatched;
+2. checks the `ONELXNU` header at `payload_phys` -- magic, version 1, a segment
+   count above zero -- and that `phys_base` is the address it was loaded at, so
+   a misplaced payload is rejected instead of scattering the kernel;
+3. copies each segment from `payload + fileoff` to
+   `phys_base + (vmaddr - virtual_base)`;
+4. zeroes `vmsize - filesize`, which is where the kernel's `.bss` lives;
+5. puts `boot_args_phys` in `x0`, the stack top in `sp`, and branches to the
+   entry's **physical** address, because the MMU is still off.
 
-That image has to be assembled with an AArch64 cross toolchain, which this
-project does not vendor and this host does not have. It is the one piece between
-the harness and a first console line.
+Any rejection prints one line to the PL011 at `0x09000000` -- the same console
+the qemu kernel profile writes to -- so a loader failure is distinguishable from
+a kernel that simply printed nothing.
+
+The assembly deliberately computes no layout. `tools/xnu/loader.py` writes the
+parameter block from the boot plan, so there is one implementation of the
+addressing rules and it is the one the tests cover. `tools/xnu/extract_elf.py`
+reduces the assembled object to raw bytes and reports the symbol offsets;
+because a raw image cannot carry relocations, it fails closed if any remain.
+That check earned its place immediately: the first version reached the
+parameter block through `adrp`/`add`, which left two relocations, so the
+unlinked image would have branched through zero. A single `adr` resolves in
+place and is well inside range for an image this size.
+
+```sh
+# macOS with Xcode: assembling needs no linker and no cross toolchain
+xcrun --sdk macosx clang --target=aarch64-none-elf -c xnu/loader/loader.S -o build/loader.o
+python3 tools/xnu/extract_elf.py build/loader.o --output build/loader.bin \
+  --json build/loader.json --max-size 0x10000 \
+  --require-symbol _start --require-symbol loader_params
+
+# then, per boot, the harness patches the parameters and can start QEMU
+python tools/xnu/qemu_run.py build/m3q-qemu.payload --loader build/loader.bin \
+  --loader-symbols build/loader.json --loader-out build/loader.patched.bin \
+  --boot-plan build/m3q-qemu.plan.json --execute
+```
+
+[.github/workflows/xnu-loader.yml](../.github/workflows/xnu-loader.yml) does the
+same on a `macos-14` runner and uploads `xnu-loader`; its first green run was
+2026-10-24 (2.2 KiB artifact, image well under the 64 KiB reserve).
 
 Still open before a QEMU run can show kernel output:
 
@@ -231,7 +261,9 @@ Still open before a QEMU run can show kernel output:
    artifact from the `macos-14` run; fetching it needs an authenticated GitHub
    session and none has been used here. `xnu/build_xnu.sh` reproduces it from a
    Mac in one command.
-2. **The loader image.** Contract above; needs a cross toolchain.
+2. **A first execution.** The loader has been assembled, checked and patched,
+   but nothing has run it: this host has no `qemu-system-aarch64`. Whether XNU
+   takes over at `start.s` is still unproven.
 3. **A real payload.** `qemu_run.py` is exercised here against a synthetic
    one-segment payload and the generated ADT, not against a built kernel. Note
    that a real kernel carries a `__CTF` debug overlay whose file size exceeds

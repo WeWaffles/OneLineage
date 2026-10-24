@@ -165,12 +165,12 @@ bash xnu/build_xnu.sh          # macOS only, qemu profile by default
 ```
 
 A clean series check is only evidence about patch text; it does not build,
-boot, or authorize anything on the phone. The `macos-14` workflow has built the
-pinned `DEVELOPMENT`/`ARM64`/`SWEET` kernel and uploaded it as
-`xnu-kernel-qemu`, so the series compiles and links; nothing has booted, because
-the loader image that consumes the payload is still missing. See `xnu/README.md`
-for the pins, the status table, and the gaps still blocking the first QEMU
-console line.
+boot, or authorize anything on the phone. The `macos-14` workflows now build
+both halves of a boot: the pinned `DEVELOPMENT`/`ARM64`/`SWEET` kernel
+(`xnu-kernel-qemu`) and the AArch64 loader that places its segments and puts
+`boot_args` in `x0` (`xnu-loader`). Nothing has booted yet: that needs a host
+with `qemu-system-aarch64`. See `xnu/README.md` for the pins, the status table,
+and the gaps still blocking the first QEMU console line.
 
 Ongoing state and the ordered next steps are maintained in `XNU_PROGRESS.md`.
 
