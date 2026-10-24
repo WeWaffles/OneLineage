@@ -176,7 +176,28 @@ TARGET="$OUT/$(basename "$KERNEL")"
 cp "$KERNEL" "$TARGET"
 
 say "structure check"
-python3 "$TOOLS/inspect_macho.py" "$TARGET" || die "the produced kernel is not an inspectable ARM64 Mach-O image"
+if ! INSPECT_OUT="$(python3 "$TOOLS/inspect_macho.py" "$TARGET" --json 2>&1)"; then
+  # Put the inspector's own reason in the failure message: job logs need
+  # authentication to read, but a failing message becomes an annotation.
+  printf '%s\n' "$INSPECT_OUT" >&2
+  python3 - "$TARGET" <<'PY' 2>&1 | head -n 25 || true
+import struct, sys
+
+data = open(sys.argv[1], "rb").read()
+magic, cpu, _sub, filetype, ncmds, sizeofcmds, _flags, _r = struct.unpack_from("<8I", data)
+print(f"header magic={magic:#x} cpu={cpu:#x} filetype={filetype} ncmds={ncmds}")
+offset = 32
+for _ in range(ncmds):
+    command, size = struct.unpack_from("<II", data, offset)
+    if command == 0x19:
+        name, vmaddr, vmsize, fileoff, filesize = struct.unpack_from("<16s4Q", data, offset + 8)
+        label = name.split(bytes([0]))[0].decode(errors="replace")
+        print(f"segment {label} vm={vmaddr:#x}+{vmsize:#x} file={fileoff:#x}+{filesize:#x}")
+    offset += size
+PY
+  die "the produced kernel is not an inspectable ARM64 Mach-O image: $(printf '%s' "$INSPECT_OUT" | tail -n 1)"
+fi
+printf '%s\n' "$INSPECT_OUT"
 
 say "kernel: $TARGET ($PROFILE profile, SWEET_PROFILE_FLAGS='$PROFILE_FLAGS')"
 shasum -a 256 "$TARGET"
