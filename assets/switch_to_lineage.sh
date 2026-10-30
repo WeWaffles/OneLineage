@@ -154,6 +154,20 @@ set_prop ro.control_privapp_permissions log
 echo "=== [1/6] Protecting OneUI Home Screen and Disabling RescueParty ==="
 set_prop persist.sys.disable_rescue true
 set_prop sys.rescue_boot_count 0
+# Periodically reset the rescue boot counter. Samsung's init increments it on
+# every zygote crash, and RescueParty triggers a factory-reset prompt (or an
+# automatic reboot on some builds) once it reaches 5. The guest's system_server
+# may crash and recover several times during the session; without this loop the
+# counter accumulates and fires RescueParty mid-session.
+if ! ps -ef 2>/dev/null | grep -v grep | grep -q "rescue_boot_suppress"; then
+    nohup $BB sh -c "
+while true; do
+    setprop sys.rescue_boot_count 0 2>/dev/null
+    sleep 15
+done
+" </dev/null >/dev/null 2>&1 &
+    echo "rescue_boot_count suppressor started"
+fi
 mkdir -p "$BACKUP_DIR"
 if [ -d "/data/user/0/com.sec.android.app.launcher/databases" ]; then
     cp -a /data/user/0/com.sec.android.app.launcher/databases/* "$BACKUP_DIR/" 2>/dev/null || true
@@ -246,6 +260,31 @@ for svc in media.codec media.metrics; do
 done
 kill -9 $(pidof media.codec) $(pidof media.metrics) 2>/dev/null || true
 
+# Samsung's init restarts media.codec on demand whenever any binder client
+# requests IMediaCodecList. The one-shot kill above is not enough: within
+# seconds the guest's system_server (or SystemUI) triggers a new lookup, init
+# respawns media.codec, and the AIDL hash mismatch drives the ~2M-iteration
+# codecHandlesFormat spin all over again. That spin saturates the system_server
+# binder thread pool, hits its 60-second watchdog, and kills system_server —
+# which is what "Lineage reboots / restarts after ~1 minute" looks like. Keep a
+# daemon that immediately kills any media.codec that init brings back.
+if ! ps -ef 2>/dev/null | grep -v grep | grep -q "media_codec_suppress"; then
+    nohup $BB sh -c "
+while true; do
+    sleep 3
+    if pidof media.codec >/dev/null 2>&1; then
+        setprop ctl.stop media.codec 2>/dev/null || true
+        kill -9 \$(pidof media.codec) 2>/dev/null || true
+    fi
+    if pidof media.metrics >/dev/null 2>&1; then
+        setprop ctl.stop media.metrics 2>/dev/null || true
+        kill -9 \$(pidof media.metrics) 2>/dev/null || true
+    fi
+done
+" </dev/null >/dev/null 2>&1 &
+    echo "media.codec suppressor started"
+fi
+
 # Same handover for wifi. The guest's WifiService binds IWificond (service
 # "wifinl80211") and drives the vendor HAL through it. Samsung's wificond is
 # still holding the client interface that One UI's (now dead) WifiService
@@ -329,8 +368,15 @@ while true; do
             DEF_IF=\$(ip route | grep -o 'dev [^ ]*' | head -n 1 | awk '{print \$2}')
             [ -n \"\$DEF_IF\" ] && ip route add default dev \"\$DEF_IF\" 2>/dev/null || true
 
-            # Mount emulated primary storage
-            $BB nsenter -t \$PID -m /system/bin/sm mount \"emulated;0\" 2>/dev/null || true
+            # Mount emulated primary storage. Vold needs a moment after boot to
+            # register the emulated volume; retry until the path is accessible
+            # or the attempt limit is reached (vold failing is non-fatal).
+            _sm_ok=0
+            for _attempt in 1 2 3 4 5; do
+                $BB nsenter -t \$PID -m /system/bin/sm mount \"emulated;0\" 2>/dev/null && _sm_ok=1 && break
+                sleep 2
+            done
+            echo \"[UI Activator] sm mount result: _sm_ok=\$_sm_ok (attempts: \$_attempt)\"
             break
         fi
     fi

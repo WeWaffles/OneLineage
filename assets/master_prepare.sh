@@ -4,6 +4,15 @@ ROOTFS="$STAGE/rootfs"
 BB=$(which busybox 2>/dev/null || echo "/data/adb/ksu/bin/busybox")
 [ -x "$BB" ] || BB=$(find /data/adb /system /data -name busybox 2>/dev/null | head -n 1)
 
+# Disable kernel softlockup and hung-task panics for the duration of the
+# container boot. The APEX extraction and pivot_root chain can stall a CPU for
+# many seconds (especially on A35/M35 Exynos where the hardware is slow and the
+# kernel's softlockup threshold is 100 s). Without this the kernel panics and
+# reboots before the container even finishes mounting. These are written back to
+# their default (1) by nothing — a hard reboot resets them — so this is safe.
+echo 0 > /proc/sys/kernel/softlockup_panic 2>/dev/null || true
+echo 0 > /proc/sys/kernel/hung_task_panic 2>/dev/null || true
+
 echo "=== 1. Ensuring Watchdog Feeder is Active ==="
 if ! ps -ef | grep -v grep | grep -q "/dev/watchdog"; then
     echo "Starting watchdog feeder..."
@@ -478,10 +487,15 @@ cat > "$STAGE/data/local/tmp/net_fix.sh" <<'NETFIX'
 # else mobile/CLAT - and point a catch-all rule at it. Idempotent.
 have_v4() { ip -4 addr show "$1" 2>/dev/null | grep -q "inet "; }
 iface=""
-if have_v4 wlan0; then
-    iface=wlan0
-else
-    for d in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep '^rmnet_data'); do
+# Check wifi first (wlan0 on most devices, wlan1 on some).
+for _w in wlan0 wlan1; do
+    if have_v4 "$_w"; then iface=$_w; break; fi
+done
+if [ -z "$iface" ]; then
+    # Mobile data: try Qualcomm rmnet_data*, Snapdragon IPA rmnet_ipa*, and
+    # MediaTek ccmni* interfaces. Some Exynos builds use rmnet0/rmnet1.
+    for d in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' \
+               | grep -E '^(rmnet_data|rmnet_ipa|ccmni|rmnet)[0-9]'); do
         if have_v4 "$d"; then iface=$d; break; fi
     done
 fi
