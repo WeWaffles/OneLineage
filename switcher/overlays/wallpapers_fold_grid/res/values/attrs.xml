@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="columnCount" format="integer"/>
+    <attr name="rowCount" format="integer"/>
+    <attr name="layout_columnSpanCompat" format="integer"/>
+    <attr name="layout_rowSpanCompat" format="integer"/>
+</resources>

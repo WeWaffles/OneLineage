@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ColorOS's fold layout with 8 columns x 2 rows instead of 4 x 4: the fold
+     fragment makes every card 2x2 (no AOD card), so the four cards sit in one
+     row at a quarter of the width instead of a 2x2 block at half the width. -->
+<com.oplus.wallpapers.business.personalize.view.PersonalCardLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@id/personalCardLayout"
+    android:padding="16dp"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    app:columnCount="8"
+    app:rowCount="2">
+    <com.oplus.wallpapers.business.personalize.view.WallpaperCardView
+        android:id="@id/wallpaperCardView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_columnSpanCompat="2"
+        app:layout_rowSpanCompat="2"/>
+    <com.oplus.wallpapers.business.personalize.view.AODCardView
+        android:id="@id/aodCardView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_columnSpanCompat="2"
+        app:layout_rowSpanCompat="2"/>
+    <com.oplus.wallpapers.business.personalize.view.LauncherIconCardView
+        android:id="@id/iconCardView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_columnSpanCompat="2"
+        app:layout_rowSpanCompat="2"/>
+    <com.oplus.wallpapers.business.personalize.view.AutoSizeCardView
+        android:id="@id/fontCardView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_columnSpanCompat="2"/>
+    <com.oplus.wallpapers.business.personalize.view.AutoSizeCardView
+        android:id="@id/moreCardView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_columnSpanCompat="2"/>
+</com.oplus.wallpapers.business.personalize.view.PersonalCardLayout>

@@ -1,0 +1,10 @@
+<resources>
+    <bool name="config_unfoldTransitionEnabled">true</bool>
+    <bool name="config_unfoldTransitionHingeAngle">true</bool>
+
+    <bool name="config_dozeAlwaysOnDisplayAvailable">true</bool>
+    <string name="config_dozeComponent" translatable="false">com.android.systemui/com.android.systemui.doze.DozeService</string>
+    <dimen name="status_bar_height_default">48dp</dimen>
+    <dimen name="status_bar_height_portrait">48dp</dimen>
+    <dimen name="status_bar_height_landscape">48dp</dimen>
+</resources>

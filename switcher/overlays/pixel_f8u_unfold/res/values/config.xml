@@ -1,0 +1,6 @@
+<resources>
+    <!-- The Z Fold8 Ultra's Pixel guest: only the unfold gates of pixel_fold8_unfold.
+         Its status bar stays with OneOSPixelStatusBar.apk and the host's measured bar. -->
+    <bool name="config_unfoldTransitionEnabled">true</bool>
+    <bool name="config_unfoldTransitionHingeAngle">true</bool>
+</resources>

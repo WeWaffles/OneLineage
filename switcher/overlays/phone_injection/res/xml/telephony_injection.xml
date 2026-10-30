@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PhoneGlobals.onCreate passes this to TelephonyComponentFactory
+     .injectTheComponentFactory before makeDefaultPhones: the jar must be under
+     /system, /product or /system_ext on a read-only mount (guest_prepare.sh's
+     overlay layer), and the factory then makes SignalStrengthController only
+     (OneOSTelephonyComponentFactory starts OneOSSignalPoll, a GET_SIGNAL_STRENGTH
+     every 20 s). The component name is read verbatim as the element's text:
+     keep it on one line, with no whitespace around it. -->
+<injection package="oneos.telephony.OneOSTelephonyComponentFactory"
+    jar="/system_ext/framework/oneos-telephony.jar">
+    <components>
+        <component>com.android.internal.telephony.SignalStrengthController</component>
+    </components>
+</injection>

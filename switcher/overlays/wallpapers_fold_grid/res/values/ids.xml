@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item type="id" name="personalCardLayout"/>
+    <item type="id" name="wallpaperCardView"/>
+    <item type="id" name="aodCardView"/>
+    <item type="id" name="iconCardView"/>
+    <item type="id" name="fontCardView"/>
+    <item type="id" name="moreCardView"/>
+</resources>

@@ -133,12 +133,13 @@ def fix_tp_info(root):
                    (("input", "KeyGestureControllerExtlmpl"), ("policy", "PhoneWindowManagerExtImpl"))]
     public = ".method public getTpInfo(Ljava/lang/String;Ljava/lang/String;)V"
     has = [rel for rel in key_gesture if public in open(find(root, rel)).read().split("\n")]
-    if len(has) != 1:
-        sys.exit(f"getTpInfo found in {has}, expected in one of {key_gesture}")
-    for rel, header in (
-            (has[0], public),
-            (os.path.join("com", "android", "server", "policy", "StrategyBlackscreenshot.smali"),
-             ".method private getTpInfo(Ljava/lang/String;Ljava/lang/String;)V")):
+    if not has:
+        sys.exit(f"getTpInfo not found in any of {key_gesture}")
+    # Both files may carry getTpInfo (X9 Ultra IN build has it in each).
+    to_patch = [(rel, public) for rel in has]
+    to_patch.append((os.path.join("com", "android", "server", "policy", "StrategyBlackscreenshot.smali"),
+                     ".method private getTpInfo(Ljava/lang/String;Ljava/lang/String;)V"))
+    for rel, header in to_patch:
         path = find(root, rel)
         lines = open(path).read().split("\n")
         idx = [i for i, l in enumerate(lines) if l == header]

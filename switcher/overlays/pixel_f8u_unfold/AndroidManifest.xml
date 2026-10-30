@@ -1,0 +1,1 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="oneos.overlay.pixel.f8u.unfold"><application android:hasCode="false"/><overlay android:targetPackage="android" android:isStatic="true" android:priority="999"/></manifest>

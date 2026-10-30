@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The inner panel (sw752dp): SystemUIGoogle has 0dp here, 4dp elsewhere. -->
+<resources>
+    <dimen name="status_bar_padding_end">4dp</dimen>
+</resources>

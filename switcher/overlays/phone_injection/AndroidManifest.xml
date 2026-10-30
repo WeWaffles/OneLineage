@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Signal bars in an AOSP-based guest (run 43, docs/pixel-guest.md): TeleService
+     (com.android.phone) reads its TelephonyComponentFactory injection config from
+     xml/telephony_injection, empty in the image. Resources are mapped by name
+     (TeleService declares no overlayable resources); scripts/make-overlays.sh
+     builds it with oneos-telephony.jar, guest_prepare.sh puts it in the guest's
+     /oem/overlay. Target SDK 37: run 43 warned that a system overlay targeting
+     less is below the required SDK level. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="oneos.overlay.phone.injection">
+    <application android:hasCode="false"/>
+    <overlay android:targetPackage="com.android.phone"
+        android:isStatic="true"
+        android:priority="1"/>
+</manifest>

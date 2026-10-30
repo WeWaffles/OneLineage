@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="oneos.overlay.wallpapers.foldgrid">
+    <application android:hasCode="false"/>
+    <overlay android:targetPackage="com.oplus.wallpapers"
+        android:isStatic="true"
+        android:priority="1"
+        android:resourcesMap="@xml/overlays"/>
+</manifest>

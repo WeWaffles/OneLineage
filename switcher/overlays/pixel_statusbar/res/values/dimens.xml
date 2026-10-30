@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SystemUIGoogle's StatusBarContentInsetsProvider: start inset = the corner
+     padding, end inset = max(dot padding, corner padding). In the guest the corner
+     padding is the framework's 0dp (Pixel's vendor overlay sets it; the guest runs
+     on Samsung's vendor) and the privacy dot padding 20dp, so the battery sat
+     47-60 px further from the right edge than the clock from the left. Both 8dp:
+     equal insets left to right, right to left, and after a locale change. -->
+<resources>
+    <dimen name="rounded_corner_content_padding">8dp</dimen>
+    <dimen name="ongoing_appops_dot_min_padding">8dp</dimen>
+    <dimen name="status_bar_padding_end">4dp</dimen>
+</resources>

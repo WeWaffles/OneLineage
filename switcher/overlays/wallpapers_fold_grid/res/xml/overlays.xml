@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<overlay>
+    <item target="layout/personal_card_fold_large_layout" value="@layout/personal_card_fold_large_layout"/>
+    <item target="attr/columnCount" value="@attr/columnCount"/>
+    <item target="attr/rowCount" value="@attr/rowCount"/>
+    <item target="attr/layout_columnSpanCompat" value="@attr/layout_columnSpanCompat"/>
+    <item target="attr/layout_rowSpanCompat" value="@attr/layout_rowSpanCompat"/>
+    <item target="id/personalCardLayout" value="@id/personalCardLayout"/>
+    <item target="id/wallpaperCardView" value="@id/wallpaperCardView"/>
+    <item target="id/aodCardView" value="@id/aodCardView"/>
+    <item target="id/iconCardView" value="@id/iconCardView"/>
+    <item target="id/fontCardView" value="@id/fontCardView"/>
+    <item target="id/moreCardView" value="@id/moreCardView"/>
+</overlay>

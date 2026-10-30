@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pixel's status bar in the guest (run 42, docs/pixel-guest.md): equal start and
+     end insets. Resources are mapped by name (SystemUIGoogle declares no
+     overlayable resources); scripts/make-overlays.sh builds it,
+     guest_prepare.sh puts it in the guest's /oem/overlay. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="oneos.overlay.pixel.statusbar">
+    <application android:hasCode="false"/>
+    <overlay android:targetPackage="com.android.systemui"
+        android:isStatic="true"
+        android:priority="1"/>
+</manifest>
