@@ -1,0 +1,466 @@
+--- a/smali/com/android/systemui/doze/DozeService.smali
++++ b/smali/com/android/systemui/doze/DozeService.smali
+@@ -30,6 +30,12 @@
+ .method public static $r8$lambda$WyOLEbIwvU4m6kUdHMSex0W1n8s(Lcom/android/systemui/doze/DozeService;F)V
+     .locals 2
+ 
++    invoke-static {p1}, Ljava/lang/Float;->isNaN(F)Z
++    move-result v0
++    if-eqz v0, :oneos_supplied_brightness
++    const p1, 0x3df5c28f    # 0.12f fallback only when OPPO leaves brightness unset
++    :oneos_supplied_brightness
++
+     iget-object v0, p0, Lcom/android/systemui/doze/DozeService;->mDozeLog:Lcom/android/systemui/doze/DozeLog;
+ 
+     const/4 v1, 0x0
+@@ -464,6 +470,17 @@
+ .method public setDozeScreenState(I)V
+     .locals 2
+ 
++    # OPPO normally programs AOD brightness through its display HAL.
++    # The Fold8 guest uses Samsung's HAL; provide Android's normalized fallback.
++    const/4 v0, 0x3
++    if-eq p1, v0, :oneos_doze_brightness
++    const/4 v0, 0x4
++    if-ne p1, v0, :oneos_stock_state
++    :oneos_doze_brightness
++    const v0, 0x3df5c28f    # 0.12f
++    invoke-super {p0, v0}, Landroid/service/dreams/DreamService;->setDozeScreenBrightness(F)V
++    :oneos_stock_state
++
+     iget-object v0, p0, Lcom/android/systemui/doze/DozeService;->mDozeLog:Lcom/android/systemui/doze/DozeLog;
+ 
+     const/4 v1, 0x0
+--- a/smali_classes2/com/android/systemui/wallpapers/ImageWallpaper$CanvasEngine.smali
++++ b/smali_classes2/com/android/systemui/wallpapers/ImageWallpaper$CanvasEngine.smali
+@@ -778,6 +778,8 @@
+     :try_end_3
+     .catch Ljava/lang/IllegalStateException; {:try_start_3 .. :try_end_3} :catch_1
+ 
++    invoke-static {p0}, Lcom/android/systemui/wallpapers/Fold8WallpaperDrawReporter;->report(Landroid/service/wallpaper/WallpaperService$Engine;)V
++
+     goto :goto_6
+ 
+     :catch_1
+--- a/smali_classes2/com/android/systemui/unfold/config/ResourceUnfoldTransitionConfig.smali
++++ b/smali_classes2/com/android/systemui/unfold/config/ResourceUnfoldTransitionConfig.smali
+@@ -94,21 +94,9 @@
+ .end method
+ 
+ .method public final isEnabled()Z
+-    .locals 0
+-
+-    iget-object p0, p0, Lcom/android/systemui/unfold/config/ResourceUnfoldTransitionConfig;->isEnabled$delegate:Lkotlin/Lazy;
+-
+-    invoke-interface {p0}, Lkotlin/Lazy;->getValue()Ljava/lang/Object;
+-
+-    move-result-object p0
+-
+-    check-cast p0, Ljava/lang/Boolean;
+-
+-    invoke-virtual {p0}, Ljava/lang/Boolean;->booleanValue()Z
+-
+-    move-result p0
+-
+-    return p0
++    .locals 1
++    const/4 v0, 0x1
++    return v0
+ .end method
+ 
+ .method public final isHapticsEnabled()Z
+@@ -130,19 +118,7 @@
+ .end method
+ 
+ .method public final isHingeAngleEnabled()Z
+-    .locals 0
+-
+-    iget-object p0, p0, Lcom/android/systemui/unfold/config/ResourceUnfoldTransitionConfig;->isHingeAngleEnabled$delegate:Lkotlin/Lazy;
+-
+-    invoke-interface {p0}, Lkotlin/Lazy;->getValue()Ljava/lang/Object;
+-
+-    move-result-object p0
+-
+-    check-cast p0, Ljava/lang/Boolean;
+-
+-    invoke-virtual {p0}, Ljava/lang/Boolean;->booleanValue()Z
+-
+-    move-result p0
+-
+-    return p0
++    .locals 1
++    const/4 v0, 0x1
++    return v0
+ .end method
+--- a/smali_classes3/com/oplus/systemui/aod/display/AODDisplayUtil.smali
++++ b/smali_classes3/com/oplus/systemui/aod/display/AODDisplayUtil.smali
+@@ -1308,6 +1308,15 @@
+     goto/16 :goto_0
+ 
+     :cond_3
++    # On Fold8, keep the user's linked clock style on the cover display too.
++    # This selects the existing software Workshop renderer, not panel features.
++    invoke-static {v2}, Lcom/oplus/systemui/aod/proxy/AodSettingsValueProxy;->getAodType(Landroid/content/Context;)I
++    move-result v0
++    if-ne v0, v3, :oneos_cover_classic
++    const/4 v0, 0x2
++    iput v0, p0, Lcom/oplus/systemui/aod/display/AODDisplayUtil;->mPerformAodType:I
++    goto/16 :goto_0
++    :oneos_cover_classic
+     iput v3, p0, Lcom/oplus/systemui/aod/display/AODDisplayUtil;->mPerformAodType:I
+ 
+     goto/16 :goto_0
+--- a/smali_classes4/com/oplus/systemui/qs/res/domain/util/ResourcesUtil.smali
++++ b/smali_classes4/com/oplus/systemui/qs/res/domain/util/ResourcesUtil.smali
+@@ -53,6 +53,22 @@
+ 
+     move-result v0
+ 
++    invoke-virtual {p0}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
++    move-result-object v1
++    invoke-virtual {v1}, Landroid/content/res/Resources;->getConfiguration()Landroid/content/res/Configuration;
++    move-result-object v1
++    iget v1, v1, Landroid/content/res/Configuration;->smallestScreenWidthDp:I
++    if-lez v1, :oneos_stock
++    const/16 v0, 0x258
++    if-ge v1, v0, :oneos_restore_density
++    const/16 v0, 0x208    # 520 dpi
++    goto :oneos_stock
++    :oneos_restore_density
++    sget-object v0, Lcom/oplus/keyguard/utils/KeyguardUtils;->Companion:Lcom/oplus/keyguard/utils/KeyguardUtils$Companion;
++    invoke-virtual {v0}, Lcom/oplus/keyguard/utils/KeyguardUtils$Companion;->getInitialDisplayDensity()I
++    move-result v0
++    :oneos_stock
++
+     int-to-float v0, v0
+ 
+     const/high16 v1, 0x43200000    # 160.0f
+--- a/smali_classes4/com/oplus/systemui/plugins/qs/OplusQSSpecialModeProvider$specialModeListener$1.smali
++++ b/smali_classes4/com/oplus/systemui/plugins/qs/OplusQSSpecialModeProvider$specialModeListener$1.smali
+@@ -12,7 +12,9 @@
+ 
+ # virtual methods
+ .method public final onConfigChanged(Landroid/content/res/Configuration;)V
+-    .locals 9
++    .locals 10
++
++    const/4 v9, 0x0
+ 
+     iget-object v0, p1, Landroid/content/res/Configuration;->windowConfiguration:Landroid/app/WindowConfiguration;
+ 
+@@ -165,6 +167,30 @@
+     move-result-object v0
+ 
+     invoke-interface {v5, v0}, Lkotlinx/coroutines/flow/MutableStateFlow;->setValue(Ljava/lang/Object;)V
++
++    # Fold8 uses equal physical DPI on both displays. Our cover-only QS
++    # scale nevertheless changes at sw600, so treat that boundary as a QS
++    # resource change after the provider has published the new configuration.
++    const/4 v9, 0x0
++    invoke-virtual {p0}, Lcom/oplus/systemui/plugins/qs/OplusQSSpecialModeProvider;->getSmallestScreenWidth()Lkotlinx/coroutines/flow/StateFlow;
++    move-result-object v6
++    invoke-interface {v6}, Lkotlinx/coroutines/flow/StateFlow;->getValue()Ljava/lang/Object;
++    move-result-object v6
++    check-cast v6, Ljava/lang/Number;
++    invoke-virtual {v6}, Ljava/lang/Number;->intValue()I
++    move-result v6
++    iget v7, p1, Landroid/content/res/Configuration;->smallestScreenWidthDp:I
++    if-lez v6, :oneos_qs_same_screen
++    if-lez v7, :oneos_qs_same_screen
++    const/16 v8, 0x258
++    if-lt v6, v8, :oneos_qs_was_cover
++    if-ge v7, v8, :oneos_qs_same_screen
++    goto :oneos_qs_changed
++    :oneos_qs_was_cover
++    if-lt v7, v8, :oneos_qs_same_screen
++    :oneos_qs_changed
++    const/4 v9, 0x1
++    :oneos_qs_same_screen
+ 
+     invoke-static {p0}, Lcom/oplus/systemui/plugins/qs/OplusQSSpecialModeProvider;->access$get_smallestScreenWidth$p(Lcom/oplus/systemui/plugins/qs/OplusQSSpecialModeProvider;)Lkotlinx/coroutines/flow/MutableStateFlow;
+ 
+@@ -257,6 +283,25 @@
+ 
+     invoke-virtual {p0}, Lcom/oplus/systemui/plugins/qs/OplusQSSpecialModeProvider;->updateLargeFoldDeviceUnFoldingCache()V
+ 
++    if-eqz v9, :oneos_qs_refresh_done
++    # A process-wide text-style singleton also keys only on real DPI/font.
++    # Invalidate that key so the recreated panel recalculates its text styles.
++    invoke-static {}, Lcom/oplus/systemui/plugins/qs/customize/view/tile/TextSizeConfig;->access$getInstance$cp()Lcom/oplus/systemui/plugins/qs/customize/view/tile/TextSizeConfig;
++    move-result-object v0
++    if-eqz v0, :oneos_qs_reload
++    invoke-virtual {v0}, Lcom/oplus/systemui/plugins/qs/customize/view/tile/TextSizeConfig;->getSpecialLanguageTextScaleHelper()Lcom/oplus/systemui/qs/base/util/SpecialLanguageTextScaleHelper;
++    move-result-object v0
++    const/4 v1, 0x0
++    iput v1, v0, Lcom/oplus/systemui/qs/base/util/SpecialLanguageTextScaleHelper;->lastDisplayMetricsDpi:I
++    :oneos_qs_reload
++    invoke-static {p0}, Lcom/oplus/systemui/plugins/qs/OplusQSSpecialModeProvider;->access$getProxy$p(Lcom/oplus/systemui/plugins/qs/OplusQSSpecialModeProvider;)Lcom/android/systemui/plugins/qs/OplusSeparateQSPlugin$IStub;
++    move-result-object v0
++    if-eqz v0, :oneos_qs_refresh_done
++    const-string v1, "OneOSQS"
++    const-string v2, "Cover/inner boundary: refresh QS resources and text styles"
++    invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    invoke-interface {v0}, Lcom/android/systemui/plugins/qs/OplusSeparateQSPlugin$IStub;->onReloadQSRootView()V
++    :oneos_qs_refresh_done
+     return-void
+ .end method
+ 
+--- a/smali_classes4/com/oplus/systemui/plugins/qs/CellCalculatorManager$Companion.smali
++++ b/smali_classes4/com/oplus/systemui/plugins/qs/CellCalculatorManager$Companion.smali
+@@ -5,7 +5,22 @@
+ 
+ # virtual methods
+ .method public final dpToPxWithInitialDensity(FLandroid/content/Context;)I
+-    .locals 0
++    .locals 2
++
++    invoke-virtual {p2}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
++    move-result-object v0
++    invoke-virtual {v0}, Landroid/content/res/Resources;->getConfiguration()Landroid/content/res/Configuration;
++    move-result-object v0
++    iget v0, v0, Landroid/content/res/Configuration;->smallestScreenWidthDp:I
++    const/16 v1, 0x258
++    if-ge v0, v1, :oneos_stock
++    if-lez v0, :oneos_stock
++    const/high16 v0, 0x40500000    # 3.25f (520 dpi)
++    mul-float v0, p1, v0
++    float-to-int v0, v0
++    return v0
++
++    :oneos_stock
+ 
+     sget-object p0, Lcom/oplus/systemui/plugins/qs/OplusSeparateQSPluginImpl;->Companion:Lcom/oplus/systemui/plugins/qs/OplusSeparateQSPluginImpl$Companion;
+ 
+@@ -47,7 +62,20 @@
+ .end method
+ 
+ .method public final getInitialDensity(Landroid/content/Context;)I
+-    .locals 0
++    .locals 2
++
++    invoke-virtual {p1}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
++    move-result-object v0
++    invoke-virtual {v0}, Landroid/content/res/Resources;->getConfiguration()Landroid/content/res/Configuration;
++    move-result-object v0
++    iget v0, v0, Landroid/content/res/Configuration;->smallestScreenWidthDp:I
++    const/16 v1, 0x258
++    if-ge v0, v1, :oneos_stock
++    if-lez v0, :oneos_stock
++    const/4 v0, 0x3
++    return v0
++
++    :oneos_stock
+ 
+     sget-object p0, Lcom/oplus/systemui/plugins/qs/OplusSeparateQSPluginImpl;->Companion:Lcom/oplus/systemui/plugins/qs/OplusSeparateQSPluginImpl$Companion;
+ 
+@@ -139,7 +167,28 @@
+ .end method
+ 
+ .method public final lockDpi(FLandroid/content/Context;)I
+-    .locals 1
++    .locals 2
++
++    invoke-virtual {p2}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
++    move-result-object v0
++    invoke-virtual {v0}, Landroid/content/res/Resources;->getConfiguration()Landroid/content/res/Configuration;
++    move-result-object v0
++    iget v0, v0, Landroid/content/res/Configuration;->smallestScreenWidthDp:I
++    const/16 v1, 0x258
++    if-ge v0, v1, :oneos_stock
++    if-lez v0, :oneos_stock
++    invoke-virtual {p2}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
++    move-result-object v0
++    invoke-virtual {v0}, Landroid/content/res/Resources;->getDisplayMetrics()Landroid/util/DisplayMetrics;
++    move-result-object v0
++    iget v0, v0, Landroid/util/DisplayMetrics;->density:F
++    const/high16 v1, 0x40500000
++    mul-float v1, p1, v1
++    div-float/2addr v1, v0
++    float-to-int v0, v1
++    return v0
++
++    :oneos_stock
+ 
+     sget-object p0, Lcom/oplus/systemui/plugins/qs/OplusSeparateQSPluginImpl;->Companion:Lcom/oplus/systemui/plugins/qs/OplusSeparateQSPluginImpl$Companion;
+ 
+@@ -193,7 +242,27 @@
+ .end method
+ 
+ .method public final lockDpi(Landroid/content/Context;I)I
+-    .locals 1
++    .locals 2
++
++    # Keep cover panel spacing at stock density while the tiles remain larger.
++    invoke-virtual {p1}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
++    move-result-object v0
++    invoke-virtual {v0}, Landroid/content/res/Resources;->getConfiguration()Landroid/content/res/Configuration;
++    move-result-object v0
++    iget v0, v0, Landroid/content/res/Configuration;->smallestScreenWidthDp:I
++    if-lez v0, :oneos_original
++    const/16 v1, 0x258
++    if-ge v0, v1, :oneos_original
++    const v0, 0x7f071abf
++    if-lt p2, v0, :oneos_original
++    const v0, 0x7f071ae9
++    if-gt p2, v0, :oneos_original
++    invoke-virtual {p1}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
++    move-result-object v0
++    invoke-virtual {v0, p2}, Landroid/content/res/Resources;->getDimensionPixelSize(I)I
++    move-result v0
++    return v0
++    :oneos_original
+ 
+     .line 41
+     invoke-virtual {p1}, Landroid/content/Context;->getResources()Landroid/content/res/Resources;
+--- a/smali_classes4/com/oplus/systemui/plugins/qs/CellCalculatorManager.smali
++++ b/smali_classes4/com/oplus/systemui/plugins/qs/CellCalculatorManager.smali
+@@ -328,6 +328,18 @@
+ 
+     iput-object p1, p0, Lcom/oplus/systemui/plugins/qs/CellCalculatorManager;->baseCellSize:Lcom/oplus/systemui/plugins/qs/CellCalculatorManager$CellSize;
+ 
++    # Text style sizes depend on the cell size even when real DPI is unchanged.
++    # Refresh them before constraints and tile listeners consume the new cells.
++    invoke-static {}, Lcom/oplus/systemui/plugins/qs/customize/view/tile/TextSizeConfig;->access$getInstance$cp()Lcom/oplus/systemui/plugins/qs/customize/view/tile/TextSizeConfig;
++    move-result-object v0
++    if-eqz v0, :oneos_qs_text_ready
++    iget v1, v0, Lcom/oplus/systemui/plugins/qs/customize/view/tile/TextSizeConfig;->smallCellSizeTotalScale:F
++    invoke-virtual {v0, v1}, Lcom/oplus/systemui/plugins/qs/customize/view/tile/TextSizeConfig;->updateScale(F)V
++    :oneos_qs_text_ready
++
++    iget-object v0, p0, Lcom/oplus/systemui/plugins/qs/CellCalculatorManager;->layoutConstraints:Ljava/util/Map;
++    invoke-interface {v0}, Ljava/util/Map;->clear()V
++
+     new-instance v0, Ljava/lang/StringBuilder;
+ 
+     const-string/jumbo v1, "updateCellSize: "
+@@ -371,6 +383,9 @@
+ 
+     const/4 v0, 0x0
+ 
++    invoke-interface {p1, v0}, Lcom/oplus/systemui/plugins/qs/CellCalculatorManager$CellCalculatorListener;->onCellSizeChange(Z)V
++
++    const/4 v0, 0x1
+     invoke-interface {p1, v0}, Lcom/oplus/systemui/plugins/qs/CellCalculatorManager$CellCalculatorListener;->onCellSizeChange(Z)V
+ 
+     goto :goto_0
+--- a/smali_classes7/com/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider$stop$1.smali
++++ b/smali_classes7/com/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider$stop$1.smali
+@@ -55,12 +55,6 @@
+ 
+     move-result-object v0
+ 
+-    const/16 v2, 0x24
+-
+-    invoke-virtual {v0, v2}, Landroid/hardware/SensorManager;->getDefaultSensor(I)Landroid/hardware/Sensor;
+-
+-    move-result-object v0
+-
+     iget-object v2, p0, Lcom/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider$stop$1;->this$0:Lcom/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider;
+ 
+     invoke-static {v2}, Lcom/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider;->access$getSensorManager$p(Lcom/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider;)Landroid/hardware/SensorManager;
+@@ -79,15 +73,15 @@
+ 
+     move-result-object v4
+ 
+-    invoke-virtual {v2, v3, v0, v1, v4}, Landroid/hardware/SensorManager;->registerListener(Landroid/hardware/SensorEventListener;Landroid/hardware/Sensor;ILandroid/os/Handler;)Z
++    invoke-static {v2, v3, v4}, Lcom/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider;->registerFold8Hinge(Landroid/hardware/SensorManager;Landroid/hardware/SensorEventListener;Landroid/os/Handler;)Z
++
++    move-result v1
+ 
+     invoke-static {}, Landroid/os/Trace;->endSection()V
+ 
+     iget-object p0, p0, Lcom/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider$stop$1;->this$0:Lcom/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider;
+ 
+-    const/4 v0, 0x1
+-
+-    invoke-virtual {p0, v0}, Lcom/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider;->setStarted(Z)V
++    invoke-virtual {p0, v1}, Lcom/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider;->setStarted(Z)V
+ 
+     :goto_0
+     return-void
+--- a/smali_classes7/com/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider.smali
++++ b/smali_classes7/com/android/systemui/unfold/updates/hinge/HingeSensorAngleProvider.smali
+@@ -193,3 +193,43 @@
+ 
+     return-void
+ .end method
++
++# Samsung's continuous sensor values are degrees despite maxRange=1 metadata.
++# This payload is selected only for the Fold8 / Find N6 guest. Never normalize.
++.method public static registerFold8Hinge(Landroid/hardware/SensorManager;Landroid/hardware/SensorEventListener;Landroid/os/Handler;)Z
++    .locals 4
++
++    const v0, 0x10096
++    invoke-virtual {p0, v0}, Landroid/hardware/SensorManager;->getDefaultSensor(I)Landroid/hardware/Sensor;
++    move-result-object v0
++    const/4 v1, 0x0
++    if-eqz v0, :standard
++    invoke-virtual {v0}, Landroid/hardware/Sensor;->getName()Ljava/lang/String;
++    move-result-object v2
++    const-string v3, "Folding Angle"
++    invoke-virtual {v2, v3}, Ljava/lang/String;->startsWith(Ljava/lang/String;)Z
++    move-result v2
++    if-eqz v2, :standard
++    invoke-virtual {p0, p1, v0, v1, p2}, Landroid/hardware/SensorManager;->registerListener(Landroid/hardware/SensorEventListener;Landroid/hardware/Sensor;ILandroid/os/Handler;)Z
++    move-result v0
++    if-eqz v0, :standard
++    const-string v1, "OneOSFold8Hinge"
++    const-string v2, "Using Samsung continuous folding angle (65686), in degrees"
++    invoke-static {v1, v2}, Landroid/util/Log;->i(Ljava/lang/String;Ljava/lang/String;)I
++    return v0
++
++    :standard
++    invoke-static {p1, p2}, Lcom/android/systemui/unfold/updates/hinge/Fold8HingeRelay;->startIfFresh(Landroid/hardware/SensorEventListener;Landroid/os/Handler;)Z
++    move-result v0
++    if-eqz v0, :oneos_coarse_fallback
++    return v0
++    :oneos_coarse_fallback
++    const/16 v0, 0x24
++    invoke-virtual {p0, v0}, Landroid/hardware/SensorManager;->getDefaultSensor(I)Landroid/hardware/Sensor;
++    move-result-object v0
++    if-eqz v0, :missing
++    invoke-virtual {p0, p1, v0, v1, p2}, Landroid/hardware/SensorManager;->registerListener(Landroid/hardware/SensorEventListener;Landroid/hardware/Sensor;ILandroid/os/Handler;)Z
++    move-result v1
++    :missing
++    return v1
++.end method
+--- a/smali_classes7/com/android/systemui/unfold/FullscreenLightRevealAnimationController.smali
++++ b/smali_classes7/com/android/systemui/unfold/FullscreenLightRevealAnimationController.smali
+@@ -292,6 +292,10 @@
+ 
+     iget-object v1, p0, Lcom/android/systemui/unfold/FullscreenLightRevealAnimationController;->internalDisplayInfos:Ljava/util/List;
+ 
++    iget-object v2, p0, Lcom/android/systemui/unfold/FullscreenLightRevealAnimationController;->displayManager:Landroid/hardware/display/DisplayManager;
++    invoke-static {v2, v1}, Lcom/android/systemui/unfold/Fold8RevealGeometry;->refresh(Landroid/hardware/display/DisplayManager;Ljava/util/List;)Ljava/util/List;
++    move-result-object v1
++
+     invoke-interface {v0, v1}, Lkotlin/jvm/functions/Function1;->invoke(Ljava/lang/Object;)Ljava/lang/Object;
+ 
+     move-result-object v0
+@@ -382,6 +386,8 @@
+ 
+     iput-object p0, v1, Landroid/view/WindowManager$LayoutParams;->packageName:Ljava/lang/String;
+ 
++    invoke-static {v1}, Lcom/android/systemui/unfold/Fold8RevealGeometry;->bounds(Landroid/view/WindowManager$LayoutParams;)V
++
+     return-object v1
+ 
+     :cond_2
+--- a/smali_classes7/com/android/systemui/unfold/UnfoldLightRevealOverlayAnimation.smali
++++ b/smali_classes7/com/android/systemui/unfold/UnfoldLightRevealOverlayAnimation.smali
+@@ -253,13 +253,8 @@
+     return v0
+ 
+     :cond_2
+-    sget-object v1, Lcom/android/systemui/unfold/UnfoldLightRevealOverlayAnimation$AddOverlayReason;->FOLD:Lcom/android/systemui/unfold/UnfoldLightRevealOverlayAnimation$AddOverlayReason;
+-
+-    if-ne p0, v1, :cond_3
+-
+-    return v0
+-
+-    :cond_3
++    # The Fold8 can report continuous closing progress. Keep the stock
++    # initial FOLD=1 / UNFOLD=0 values, then follow the supplied progress.
+     invoke-virtual {p1}, Ljava/lang/Float;->floatValue()F
+ 
+     move-result p0
