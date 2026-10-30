@@ -166,7 +166,7 @@ if [ "$1" != "--scripts-only" ]; then
     want=$(sha256sum "$IMG" | cut -d' ' -f1)
     SRC_GZ="${ON_PHONE_GZ:-$INCOMING/system.raw.gz}"
     have_size=$(adb_ shell "stat -c %s $SRC_GZ 2>/dev/null" | tr -d '\r')
-    if [ "$have_size" != "$(stat -c %s "$GZ")" ]; then
+    if [ "$have_size" != "$(wc -c < "$GZ" | tr -d ' ')" ]; then
         [ -z "$ON_PHONE_GZ" ] || { echo "$ON_PHONE_GZ is missing or incomplete ($have_size bytes)" >&2; exit 1; }
         adb_ push "$GZ" "$SRC_GZ"
     fi
