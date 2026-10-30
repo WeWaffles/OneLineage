@@ -9,8 +9,10 @@ Hot-switch between stock **One UI** and a **LineageOS 23.2 (Android 16) GSI** on
 > It may not work on other Samsung models, other One UI versions, or other devices at all. It is experimental, it replaces core parts of a running system, and it can crash, hang or soft-brick your phone, fill `/data`, or break radio/SMS. **Back up everything first. Use at your own risk.**
 > Also, I did use AI a fair bit in this project, it would have taken a LOT longer without it.
 
+> Hey, Contributor RealThalesGit here, if you somewhat get throw back to one ui after getting stuck at lineage boot screen, check your manager modules.
+
 ## Requirements
-- A rooted Samsung phone (the tested one is an S26 Ultra on One UI 8.5)
+- A rooted samsung phone (the tested ones are: S26 Ultra and Samsung A25, both at One UI 8.5.) (Can be temp-root too.)
 - Enough free space on `/data` for the extracted GSI
 - Internet access for the GSI download (LineageOS 23.2 GSI, EXT4, VANILLA or GAPPS builds from SourceForge)
 
@@ -53,9 +55,11 @@ Hot-switch between stock **One UI** and a **LineageOS 23.2 (Android 16) GSI** on
 - Developer options crash (the guest registers no `adb` service).
 - DTMF tones glitch, and deep-buffer audio hangs, so it stays disabled.
 - Never kill the host `netd` while Lineage is running.
+- After some minutes (or 1 minute) after lineageos started, you get throw back at one ui 8, we're fixing this as we know the root cause.
 
 ## Building
-Edit the paths at the top of `build_apk.sh` (JDK 17, Android SDK build-tools 34, android-34 platform), provide your own signing keystore, then run `./build_apk.sh`.
+Set `ANDROID_SDK_ROOT` (or `ANDROID_HOME`) to your Android SDK directory, install JDK 17, Android SDK build-tools 34.0.0 and the android-34 platform, then run `./build_apk.sh`. The script writes the APK to `out/OneLineage.apk` and creates a development keystore on first use. You can override `BUILD_TOOLS_VERSION`, `ANDROID_PLATFORM`, and `OUT_APK`; set `KEYSTORE`, `KEYSTORE_PASS`, `KEY_ALIAS`, and `KEY_PASS` to sign with your own keystore.
 
 ## Credits
 LineageOS GSI builds by MisterZtr (SourceForge). LineageOS and Android are trademarks of their respective owners. Not affiliated with Samsung, Google or LineageOS.
+WeWaffles (creator of OneLineage)

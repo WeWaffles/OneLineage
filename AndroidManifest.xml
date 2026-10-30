@@ -15,6 +15,7 @@
     <application
         android:label="@string/app_name"
         android:icon="@drawable/ic_launcher"
+        android:localeConfig="@xml/locales_config"
         android:theme="@style/Theme.LineageSwitcher"
         android:allowBackup="true"
         android:supportsRtl="true">

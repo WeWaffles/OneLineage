@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OneLineage</string>
+    <string name="title_dashboard">OneLineage</string>
+    <string name="desc_dashboard">Alternador de ambientes para Galaxy S26 Ultra</string>
+
+    <string name="header_subtitle_oneui">Alternador de ambiente • One UI</string>
+    <string name="header_subtitle_lineage">Alternador de ambiente • LineageOS</string>
+    <string name="system_status_title">Status do sistema</string>
+    <string name="status_root_checking">Verificando permissões de root…</string>
+    <string name="status_root_granted">Root KernelSU ativo</string>
+    <string name="status_root_denied">Acesso root necessário</string>
+    <string name="status_root_active_detail">✓ Root: KernelSU ativo (uid=0)</string>
+    <string name="status_root_denied_detail">✗ Root: acesso negado (KernelSU necessário)</string>
+    <string name="status_userspace_scanning">Ambiente atual: verificando…</string>
+    <string name="status_userspace_lineage">Ambiente atual: LineageOS %1$s</string>
+    <string name="status_userspace_oneui">Ambiente atual: Samsung One UI (original)</string>
+    <string name="status_userspace_oneui_short">Ambiente atual: Samsung One UI</string>
+    <string name="status_image_checking">Imagem do LineageOS: verificando…</string>
+    <string name="status_image_installed">Imagem: instalada e pronta (%1$s)</string>
+    <string name="status_image_missing">Imagem: não instalada (system.raw ausente)</string>
+    <string name="status_image_error">Erro ao verificar a imagem: %1$s</string>
+
+    <string name="appearance_title">Aparência</string>
+    <string name="open_settings">Abrir configurações de idioma e tema</string>
+    <string name="settings_title">Preferências</string>
+    <string name="settings_subtitle">Personalize o OneLineage</string>
+    <string name="language_title">Idioma do app</string>
+    <string name="language_english">English</string>
+    <string name="language_portuguese_brazil">Português (Brasil)</string>
+    <string name="theme_title">Tema de cores</string>
+    <string name="theme_option_lineage">Azul Lineage</string>
+    <string name="theme_option_ocean">Oceano</string>
+    <string name="theme_option_violet">Violeta</string>
+    <string name="theme_option_amoled">Preto AMOLED</string>
+    <string name="theme_dialog_title">Escolha um tema de cores</string>
+    <string-array name="theme_names">
+        <item>@string/theme_option_lineage</item>
+        <item>@string/theme_option_ocean</item>
+        <item>@string/theme_option_violet</item>
+        <item>@string/theme_option_amoled</item>
+    </string-array>
+
+    <string name="switch_userspace_title">Alternar ambiente</string>
+    <string name="btn_boot_lineage">Mudar para LineageOS</string>
+    <string name="btn_return_oneui">Voltar para One UI</string>
+    <string name="image_title">Imagem do LineageOS 23.2</string>
+    <string name="image_variant_description">Selecione uma versão dos lançamentos oficiais:</string>
+    <string name="flavor_vanilla_title">Vanilla (LineageOS limpo)</string>
+    <string name="flavor_vanilla_description">A opção mais leve</string>
+    <string name="flavor_gapps_title">Edição MindTheGapps</string>
+    <string name="flavor_gapps_description">Google Play Store e Serviços oficiais</string>
+    <string name="flavor_desc_vanilla">Vanilla: a opção mais leve</string>
+    <string name="flavor_desc_gapps">MindTheGapps: LineageOS 23.2 com Google Play Store e Serviços.</string>
+
+    <string name="btn_download_lineage">Baixar e instalar</string>
+    <string name="btn_download_reinstall">Reinstalar imagem</string>
+    <string name="btn_pause_download">Pausar download</string>
+    <string name="btn_resume_download">Retomar download</string>
+    <string name="btn_preparing">Preparando…</string>
+    <string name="btn_installing">Instalando…</string>
+    <string name="btn_delete_lineage">Excluir arquivos do LineageOS</string>
+    <string name="btn_backup_launcher">Salvar layout</string>
+    <string name="btn_restore_launcher">Restaurar layout</string>
+
+    <string name="progress_download_paused">Download pausado. Toque em Retomar download para continuar.</string>
+    <string name="progress_download_resuming">Retomando o download…</string>
+    <string name="progress_connecting">Conectando ao lançamento oficial no SourceForge…</string>
+    <string name="progress_downloading">Baixando: %1$d MB / %2$d MB (%3$d%%) • %4$.1f MB/s</string>
+    <string name="progress_extracting">Extraindo a imagem com o 7-Zip ARM64…</string>
+    <string name="progress_installed">LineageOS 23.2 (%1$s) instalado com sucesso!</string>
+    <string name="progress_setup_failed">Falha na configuração: %1$s</string>
+
+    <string name="launcher_safety_title">Proteção da tela inicial da One UI</string>
+    <string name="launcher_safety_description">Salva o layout e os widgets para evitar perda após falha ou reinicialização.</string>
+    <string name="activity_log_title">Registro de atividades</string>
+    <string name="status_idle">Inativo</string>
+    <string name="log_initialized">OneLineage iniciado.\n</string>
+
+    <string name="log_flavor_vanilla">Vanilla: a opção mais leve</string>
+    <string name="log_flavor_gapps">MindTheGapps: LineageOS 23.2 com Google Play Store e Serviços.</string>
+    <string name="log_root_required_setup">ERRO: é necessário acesso root para configurar o LineageOS!</string>
+    <string name="log_root_required_boot">ERRO: é necessário acesso root para iniciar o LineageOS!</string>
+    <string name="log_root_required_restore">ERRO: é necessário acesso root para restaurar a One UI!</string>
+    <string name="log_root_error_unpacking">Erro ao extrair %1$s: %2$s</string>
+    <string name="log_assets_ready">Arquivos do OneLineage extraídos e verificados.</string>
+    <string name="log_download_paused">Download pausado.</string>
+    <string name="log_download_resumed">Download retomado.</string>
+    <string name="status_paused">Pausado</string>
+    <string name="status_downloading">Baixando…</string>
+    <string name="status_preparing">Preparando…</string>
+    <string name="status_extracting">Extraindo…</string>
+    <string name="status_ready">Pronto</string>
+    <string name="status_error">Erro</string>
+    <string name="status_cleaning">Limpando…</string>
+    <string name="status_switching">Alternando…</string>
+    <string name="status_restoring">Restaurando…</string>
+    <string name="status_backing_up">Salvando…</string>
+    <string name="log_redirect">Redirecionando para espelho [%1$d]…</string>
+    <string name="log_setup_start">\n[CONFIGURAÇÃO] Preparando diretório: %1$s</string>
+    <string name="log_wiping_userdata">[CONFIGURAÇÃO] Limpando os dados existentes para uma instalação inicial…</string>
+    <string name="log_network_fetch">[DOWNLOAD] Baixando a edição %1$s pelo cliente HTTP…</string>
+    <string name="log_url">URL: %1$s</string>
+    <string name="log_download_complete">✓ Download concluído! (%1$d MB)</string>
+    <string name="log_extracting_archive">Extraindo %1$s com o 7zz…</string>
+    <string name="log_extract_failed">Falha ao extrair com o 7zz (código %1$d): system.raw não foi criado</string>
+    <string name="log_extract_complete">✓ Extração concluída → system.raw pronto!</string>
+    <string name="log_setup_failed">Falha no download ou na configuração: %1$s</string>
+    <string name="dialog_delete_title">Excluir arquivos do LineageOS?</string>
+    <string name="dialog_delete_message">Isso desmontará o contêiner, desconectará os dispositivos loop e removerá system.raw para liberar cerca de 3,5 GB. Você poderá instalar novamente.</string>
+    <string name="dialog_delete_confirm">Excluir</string>
+    <string name="dialog_cancel">Cancelar</string>
+    <string name="log_cleanup_start">\n[LIMPEZA] Encerrando processos do contêiner e desmontando…</string>
+    <string name="log_cleanup_warning">✗ Não foi possível remover system.raw por completo: um dispositivo loop ainda está usando o arquivo. Tente novamente ou reinicie o aparelho.</string>
+    <string name="log_cleanup_done">✓ Arquivos do LineageOS excluídos. Todos os mounts loop foram desmontados!</string>
+    <string name="log_delete_failed">Falha ao excluir: %1$s</string>
+    <string name="log_boot_start">\n[INÍCIO] Preparando a inicialização do LineageOS 23.2…</string>
+    <string name="log_takeover_spawned">Processo de alternância iniciado. A tela está mudando…</string>
+    <string name="log_launch_failed">Falha ao iniciar: %1$s</string>
+    <string name="log_return_start">\n[INÍCIO] Restaurando a One UI e reiniciando a tela…</string>
+    <string name="log_restore_triggered">Restauração da One UI iniciada.</string>
+    <string name="log_restore_failed">Falha ao restaurar: %1$s</string>
+    <string name="log_backup_start">\nSalvando o banco de dados da tela inicial da One UI…</string>
+    <string name="log_backup_done">✓ Layout da tela inicial salvo!</string>
+    <string name="log_backup_failed">Falha ao salvar: %1$s</string>
+    <string name="log_launcher_restore_start">\nRestaurando o layout da tela inicial da One UI…</string>
+    <string name="log_launcher_restore_failed">Falha ao restaurar: %1$s</string>
+</resources>

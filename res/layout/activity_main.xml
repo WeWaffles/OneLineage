@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root_scroll_view"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/m3_background"
@@ -14,16 +15,23 @@
         android:paddingTop="36dp"
         android:paddingBottom="48dp">
 
-        <!-- Top App Bar / Header -->
+        <!-- Top app bar -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="OneLineage"
+                android:text="@string/app_name"
                 android:textColor="@color/m3_text_primary"
                 android:textSize="26sp"
                 android:fontFamily="sans-serif-medium"
@@ -34,15 +42,29 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:text="Dual Userspace Switcher • One UI"
+                android:text="@string/header_subtitle_oneui"
                 android:textColor="@color/m3_text_secondary"
                 android:textSize="13sp" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_menu"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/btn_m3_tonal"
+                android:contentDescription="@string/open_settings"
+                android:text="☰"
+                android:textAllCaps="false"
+                android:textColor="@color/m3_text_primary"
+                android:textSize="22sp" />
         </LinearLayout>
 
         <!-- System Status Card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:id="@+id/card_system_status"
             android:layout_marginTop="20dp"
             android:background="@drawable/card_surface_container"
             android:orientation="vertical"
@@ -51,7 +73,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="System Status"
+                android:text="@string/system_status_title"
                 android:textColor="@color/m3_primary"
                 android:textSize="13sp"
                 android:fontFamily="sans-serif-medium" />
@@ -70,7 +92,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:text="Current Userspace: Scanning…"
+                android:text="@string/status_userspace_scanning"
                 android:textColor="@color/m3_text_secondary"
                 android:textSize="13sp" />
 
@@ -79,13 +101,14 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:text="LineageOS Image: Checking…"
+                android:text="@string/status_image_checking"
                 android:textColor="@color/m3_text_secondary"
                 android:textSize="13sp" />
         </LinearLayout>
 
         <!-- Switcher Actions Hero Card -->
         <LinearLayout
+            android:id="@+id/card_switch_actions"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
@@ -96,7 +119,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Switch Userspace"
+                android:text="@string/switch_userspace_title"
                 android:textColor="@color/m3_primary"
                 android:textSize="13sp"
                 android:fontFamily="sans-serif-medium" />
@@ -129,6 +152,7 @@
 
         <!-- Image Management & Flavor Selector Card -->
         <LinearLayout
+            android:id="@+id/card_image_management"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
@@ -139,7 +163,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="LineageOS 23.2 Image"
+                android:text="@string/image_title"
                 android:textColor="@color/m3_primary"
                 android:textSize="13sp"
                 android:fontFamily="sans-serif-medium" />
@@ -149,7 +173,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="Select variant to download from official releases:"
+                android:text="@string/image_variant_description"
                 android:textColor="@color/m3_text_secondary"
                 android:textSize="13sp" />
 
@@ -189,7 +213,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="Vanilla (Clean LineageOS)"
+                            android:text="@string/flavor_vanilla_title"
                             android:textColor="@color/m3_text_primary"
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
@@ -199,7 +223,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
-                            android:text="The lightweight option"
+                            android:text="@string/flavor_vanilla_description"
                             android:textColor="@color/m3_text_secondary"
                             android:textSize="12sp" />
                     </LinearLayout>
@@ -242,7 +266,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="MindTheGapps Edition"
+                            android:text="@string/flavor_gapps_title"
                             android:textColor="@color/m3_text_primary"
                             android:textSize="14sp"
                             android:fontFamily="sans-serif-medium"
@@ -252,7 +276,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
-                            android:text="Official Google Play Store &amp; Play Services"
+                            android:text="@string/flavor_gapps_description"
                             android:textColor="@color/m3_text_secondary"
                             android:textSize="12sp" />
                     </LinearLayout>
@@ -315,6 +339,7 @@
 
         <!-- One UI Protection Card -->
         <LinearLayout
+            android:id="@+id/card_launcher_safety"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
@@ -325,7 +350,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="One UI Home Screen Safety"
+                android:text="@string/launcher_safety_title"
                 android:textColor="@color/m3_primary"
                 android:textSize="13sp"
                 android:fontFamily="sans-serif-medium" />
@@ -334,7 +359,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="Snapshots launcher layout &amp; widgets against battery death or reboot corruption."
+                android:text="@string/launcher_safety_description"
                 android:textColor="@color/m3_text_secondary"
                 android:textSize="13sp" />
 
@@ -374,6 +399,7 @@
 
         <!-- Operation Log Card -->
         <LinearLayout
+            android:id="@+id/card_operation_log"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
@@ -391,7 +417,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Activity Log"
+                    android:text="@string/activity_log_title"
                     android:textColor="@color/m3_text_secondary"
                     android:textSize="13sp"
                     android:fontFamily="sans-serif-medium" />
@@ -400,23 +426,32 @@
                     android:id="@+id/tv_log_status"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Idle"
+                    android:text="@string/status_idle"
                     android:textColor="@color/m3_text_tertiary"
                     android:textSize="12sp" />
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/tv_console_log"
+            <ScrollView
+                android:id="@+id/log_scroll_view"
                 android:layout_width="match_parent"
-                android:layout_height="120dp"
+                android:layout_height="160dp"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/log_container"
-                android:fontFamily="monospace"
-                android:padding="12dp"
                 android:scrollbars="vertical"
-                android:text="OneLineage initialized.\n"
-                android:textColor="@color/m3_log_text"
-                android:textSize="11sp" />
+                android:fillViewport="true"
+                android:fadeScrollbars="false">
+
+                <TextView
+                    android:id="@+id/tv_console_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="120dp"
+                    android:fontFamily="monospace"
+                    android:padding="12dp"
+                    android:text="@string/log_initialized"
+                    android:textColor="@color/m3_log_text"
+                    android:textSize="11sp" />
+            </ScrollView>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

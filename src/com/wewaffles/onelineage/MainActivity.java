@@ -2,15 +2,27 @@ package com.wewaffles.onelineage;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
+import android.app.LocaleManager;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.LocaleList;
 import android.os.Looper;
+import android.view.Gravity;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.RadioButton;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.BufferedReader;
@@ -21,6 +33,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -40,6 +53,7 @@ public class MainActivity extends Activity {
     private ProgressBar pbDownload;
     private TextView tvConsoleLog;
     private TextView tvLogStatus;
+    private ScrollView logScrollView;
 
     private LinearLayout cardFlavorVanilla;
     private LinearLayout cardFlavorGapps;
@@ -52,12 +66,37 @@ public class MainActivity extends Activity {
     private Button btnReturnOneUI;
     private Button btnBackupLauncher;
     private Button btnRestoreLauncher;
+    private Button btnMenu;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Object downloadPauseLock = new Object();
+    private volatile boolean downloadRunning = false;
+    private volatile boolean downloadPauseEnabled = false;
+    private volatile boolean downloadPaused = false;
+    private String downloadButtonIdleText;
+    private int selectedTheme;
+    private Palette currentPalette;
     private boolean isRootGranted = false;
     private String suBinary = "su";
     private Flavor selectedFlavor = Flavor.VANILLA;
+
+    @Override
+    protected void attachBaseContext(android.content.Context newBase) {
+        super.attachBaseContext(applySavedLocale(newBase));
+    }
+
+    private static android.content.Context applySavedLocale(android.content.Context context) {
+        if (Build.VERSION.SDK_INT >= 33) return context;
+        String languageTag = context.getSharedPreferences("onelineage", MODE_PRIVATE)
+                .getString("app_language", "");
+        if (languageTag.isEmpty()) return context;
+        Locale locale = Locale.forLanguageTag(languageTag);
+        Locale.setDefault(locale);
+        Configuration configuration = new Configuration(context.getResources().getConfiguration());
+        configuration.setLocale(locale);
+        return context.createConfigurationContext(configuration);
+    }
 
     private static final String STAGE_DIR = "/data/local/tmp/lineage_stage";
     private static final String SYSTEM_RAW = STAGE_DIR + "/system.raw";
@@ -80,6 +119,11 @@ public class MainActivity extends Activity {
         tvDownloadProgress = findViewById(R.id.tv_download_progress);
         pbDownload = findViewById(R.id.pb_download);
         tvConsoleLog = findViewById(R.id.tv_console_log);
+        logScrollView = findViewById(R.id.log_scroll_view);
+        logScrollView.setOnTouchListener((view, event) -> {
+            view.getParent().requestDisallowInterceptTouchEvent(true);
+            return false;
+        });
         tvLogStatus = findViewById(R.id.tv_log_status);
 
         cardFlavorVanilla = findViewById(R.id.card_flavor_vanilla);
@@ -93,8 +137,13 @@ public class MainActivity extends Activity {
         btnReturnOneUI = findViewById(R.id.btn_return_oneui);
         btnBackupLauncher = findViewById(R.id.btn_backup_launcher);
         btnRestoreLauncher = findViewById(R.id.btn_restore_launcher);
+        btnMenu = findViewById(R.id.btn_menu);
+        downloadButtonIdleText = getString(R.string.btn_download_lineage);
 
         setupFlavorSelection();
+        selectedTheme = getSharedPreferences("onelineage", MODE_PRIVATE).getInt("color_theme", 0);
+        if (selectedTheme < 0 || selectedTheme > 3) selectedTheme = 0;
+        applyTheme();
         extractAssets();
         checkRootAndSystem();
 
@@ -104,6 +153,7 @@ public class MainActivity extends Activity {
         btnReturnOneUI.setOnClickListener(v -> returnToOneUI());
         btnBackupLauncher.setOnClickListener(v -> backupLauncher());
         btnRestoreLauncher.setOnClickListener(v -> restoreLauncher());
+        btnMenu.setOnClickListener(v -> showPreferencesDrawer());
     }
 
     @Override
@@ -132,22 +182,342 @@ public class MainActivity extends Activity {
 
         switch (flavor) {
             case VANILLA:
-                tvDownloadDesc.setText("Vanilla: The lightweight option");
+                tvDownloadDesc.setText(R.string.flavor_desc_vanilla);
                 break;
             case GAPPS:
-                tvDownloadDesc.setText("MindTheGapps: LineageOS 23.2 + Google Play Store & Services.");
+                tvDownloadDesc.setText(R.string.flavor_desc_gapps);
                 break;
+        }
+        if (currentPalette != null) applyFlavorCardTheme();
+    }
+
+    private void showPreferencesDrawer() {
+        Palette palette = currentPalette;
+        Dialog dialog = new Dialog(this);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(24), dp(32), dp(20), dp(20));
+        panel.setBackground(roundDrawerBackground(palette));
+
+        TextView title = drawerText(getString(R.string.settings_title), 24, palette.textPrimary, true);
+        panel.addView(title, drawerParams(-1, -2));
+        TextView subtitle = drawerText(getString(R.string.settings_subtitle), 14, palette.textSecondary, false);
+        LinearLayout.LayoutParams subtitleParams = drawerParams(-1, -2);
+        subtitleParams.topMargin = dp(4);
+        panel.addView(subtitle, subtitleParams);
+
+        ScrollView content = new ScrollView(this);
+        content.setFillViewport(false);
+        LinearLayout choices = new LinearLayout(this);
+        choices.setOrientation(LinearLayout.VERTICAL);
+        TextView languageLabel = drawerSectionTitle(getString(R.string.language_title), palette);
+        choices.addView(languageLabel, drawerParams(-1, -2));
+        int selectedLanguage = currentLanguageIndex();
+        addDrawerChoice(choices, getString(R.string.language_english), selectedLanguage == 0,
+                null, palette, () -> changeLanguage("en", dialog));
+        addDrawerChoice(choices, getString(R.string.language_portuguese_brazil), selectedLanguage == 1,
+                null, palette, () -> changeLanguage("pt-BR", dialog));
+
+        TextView themeLabel = drawerSectionTitle(getString(R.string.theme_title), palette);
+        LinearLayout.LayoutParams themeLabelParams = drawerParams(-1, -2);
+        themeLabelParams.topMargin = dp(22);
+        choices.addView(themeLabel, themeLabelParams);
+        String[] themeNames = getResources().getStringArray(R.array.theme_names);
+        for (int i = 0; i < themeNames.length; i++) {
+            final int themeIndex = i;
+            addDrawerChoice(choices, themeNames[i], selectedTheme == i,
+                    Palette.forTheme(i).accent, palette, () -> {
+                        selectedTheme = themeIndex;
+                        getSharedPreferences("onelineage", MODE_PRIVATE).edit()
+                                .putInt("color_theme", selectedTheme).apply();
+                        applyTheme();
+                        dialog.dismiss();
+                        showPreferencesDrawer();
+                    });
+        }
+        content.addView(choices);
+        LinearLayout.LayoutParams contentParams = drawerParams(-1, 0);
+        contentParams.weight = 1;
+        contentParams.topMargin = dp(16);
+        panel.addView(content, contentParams);
+
+        TextView close = drawerText(getString(R.string.dialog_cancel), 14, palette.accent, true);
+        close.setGravity(Gravity.CENTER);
+        close.setBackground(rippleDrawable(palette.raisedSurface, palette.accentRipple, 24));
+        close.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout.LayoutParams closeParams = drawerParams(-1, dp(48));
+        closeParams.topMargin = dp(12);
+        panel.addView(close, closeParams);
+
+        dialog.setContentView(panel);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawableResource(android.R.color.transparent);
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.gravity = Gravity.START | Gravity.TOP;
+            attributes.width = Math.min(dp(360), getResources().getDisplayMetrics().widthPixels - dp(40));
+            attributes.height = WindowManager.LayoutParams.MATCH_PARENT;
+            attributes.dimAmount = 0.38f;
+            window.setAttributes(attributes);
+        }
+        dialog.show();
+        if (window != null) {
+            window.setLayout(Math.min(dp(360), getResources().getDisplayMetrics().widthPixels - dp(40)),
+                    WindowManager.LayoutParams.MATCH_PARENT);
+        }
+    }
+
+    private void addDrawerChoice(LinearLayout parent, String label, boolean selected, Integer swatch,
+                                 Palette palette, Runnable action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(dp(14), 0, dp(14), 0);
+        row.setBackground(rippleDrawable(selected ? palette.primarySurface : palette.raisedSurface,
+                palette.accentRipple, 18));
+        row.setClickable(true);
+        row.setFocusable(true);
+        if (swatch != null) {
+            View colorDot = new View(this);
+            GradientDrawable dot = new GradientDrawable();
+            dot.setShape(GradientDrawable.OVAL);
+            dot.setColor(swatch);
+            colorDot.setBackground(dot);
+            LinearLayout.LayoutParams dotParams = drawerParams(dp(16), dp(16));
+            dotParams.setMarginEnd(dp(12));
+            row.addView(colorDot, dotParams);
+        }
+        TextView text = drawerText(label, 15, palette.textPrimary, selected);
+        row.addView(text, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView check = drawerText(selected ? "✓" : "", 18, palette.accent, true);
+        check.setGravity(Gravity.CENTER);
+        row.addView(check, drawerParams(dp(28), dp(28)));
+        row.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams params = drawerParams(-1, dp(52));
+        params.topMargin = dp(6);
+        parent.addView(row, params);
+    }
+
+    private void changeLanguage(String languageTag, Dialog dialog) {
+        getSharedPreferences("onelineage", MODE_PRIVATE).edit()
+                .putString("app_language", languageTag).apply();
+        dialog.dismiss();
+        if (Build.VERSION.SDK_INT >= 33) {
+            LocaleManager localeManager = getSystemService(LocaleManager.class);
+            if (localeManager != null) {
+                localeManager.setApplicationLocales(LocaleList.forLanguageTags(languageTag));
+            }
+        } else {
+            recreate();
+        }
+    }
+
+    private int currentLanguageIndex() {
+        Locale current = getResources().getConfiguration().getLocales().get(0);
+        return "pt".equalsIgnoreCase(current.getLanguage()) ? 1 : 0;
+    }
+
+    private TextView drawerSectionTitle(String text, Palette palette) {
+        TextView view = drawerText(text, 13, palette.accent, true);
+        view.setPadding(dp(4), 0, 0, 0);
+        return view;
+    }
+
+    private TextView drawerText(String text, int sizeSp, int color, boolean medium) {
+        TextView view = new TextView(this);
+        view.setText(text);
+        view.setTextSize(sizeSp);
+        view.setTextColor(color);
+        view.setTypeface(android.graphics.Typeface.create(
+                medium ? "sans-serif-medium" : "sans-serif",
+                android.graphics.Typeface.NORMAL));
+        return view;
+    }
+
+    private LinearLayout.LayoutParams drawerParams(int width, int height) {
+        return new LinearLayout.LayoutParams(width, height);
+    }
+
+    private int dp(int value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private GradientDrawable roundDrawerBackground(Palette palette) {
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(palette.surface);
+        background.setCornerRadii(new float[]{0, 0, dp(28), dp(28), dp(28), dp(28), 0, 0});
+        return background;
+    }
+
+    private RippleDrawable rippleDrawable(int fill, int ripple, int radiusDp) {
+        return new RippleDrawable(ColorStateList.valueOf(ripple),
+                roundDrawable(fill, Color.TRANSPARENT, radiusDp), null);
+    }
+
+    private void applyTheme() {
+        currentPalette = Palette.forTheme(selectedTheme);
+        Palette palette = currentPalette;
+
+        findViewById(R.id.root_scroll_view).setBackgroundColor(palette.background);
+        getWindow().setStatusBarColor(palette.background);
+        getWindow().setNavigationBarColor(palette.background);
+
+        int[] cardIds = {
+                R.id.card_system_status, R.id.card_switch_actions,
+                R.id.card_image_management, R.id.card_launcher_safety, R.id.card_operation_log
+        };
+        for (int id : cardIds) {
+            View card = findViewById(id);
+            if (card != null) card.setBackground(roundDrawable(palette.surface, palette.outline, 24));
+        }
+
+        setThemedButton(btnBootLineage, palette.primary, palette.onPrimary, palette.primary);
+        setThemedButton(btnReturnOneUI, palette.raisedSurface, palette.textPrimary, palette.accentRipple);
+        setThemedButton(btnDownloadLineage, palette.raisedSurface, palette.accent, palette.accentRipple);
+        setThemedButton(btnDeleteLineage, palette.errorSurface, palette.error, palette.error);
+        setThemedButton(btnBackupLauncher, palette.raisedSurface, palette.textPrimary, palette.accentRipple);
+        setThemedButton(btnRestoreLauncher, palette.raisedSurface, palette.textPrimary, palette.accentRipple);
+        setThemedButton(btnMenu, palette.raisedSurface, palette.textPrimary, palette.accentRipple);
+
+        logScrollView.setBackground(roundDrawable(palette.logBackground, palette.outline, 16));
+        pbDownload.setProgressTintList(ColorStateList.valueOf(palette.accent));
+        pbDownload.setIndeterminateTintList(ColorStateList.valueOf(palette.accent));
+        applyTextPalette(findViewById(R.id.root_scroll_view), palette);
+        applyFlavorCardTheme();
+    }
+
+    private void applyTextPalette(View view, Palette palette) {
+        if (view instanceof TextView && !(view instanceof Button)) {
+            TextView textView = (TextView) view;
+            Object role = textView.getTag();
+            if (role == null) {
+                int color = textView.getCurrentTextColor();
+                if (color == getColor(R.color.m3_primary)) role = "accent";
+                else if (color == getColor(R.color.m3_text_primary)) role = "primary";
+                else if (color == getColor(R.color.m3_text_secondary)) role = "secondary";
+                else if (color == getColor(R.color.m3_text_tertiary)) role = "tertiary";
+                else if (color == getColor(R.color.m3_error)) role = "error";
+                else if (color == getColor(R.color.m3_log_text)) role = "log";
+                else if (color == getColor(R.color.m3_on_primary)) role = "onPrimary";
+                if (role != null) textView.setTag(role);
+            }
+
+            if ("accent".equals(role)) textView.setTextColor(palette.accent);
+            else if ("primary".equals(role)) textView.setTextColor(palette.textPrimary);
+            else if ("secondary".equals(role)) textView.setTextColor(palette.textSecondary);
+            else if ("tertiary".equals(role)) textView.setTextColor(palette.textTertiary);
+            else if ("error".equals(role)) textView.setTextColor(palette.error);
+            else if ("log".equals(role)) textView.setTextColor(palette.logText);
+            else if ("onPrimary".equals(role)) textView.setTextColor(palette.onPrimary);
+        }
+
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                applyTextPalette(group.getChildAt(i), palette);
+            }
+        }
+    }
+
+    private void setSemanticTextColor(TextView view, int color) {
+        view.setTag("semantic");
+        view.setTextColor(color);
+    }
+
+    private void applyFlavorCardTheme() {
+        if (currentPalette == null) return;
+        setFlavorCardTheme(cardFlavorVanilla, selectedFlavor == Flavor.VANILLA);
+        setFlavorCardTheme(cardFlavorGapps, selectedFlavor == Flavor.GAPPS);
+        ColorStateList tint = ColorStateList.valueOf(currentPalette.accent);
+        rbVanilla.setButtonTintList(tint);
+        rbGapps.setButtonTintList(tint);
+    }
+
+    private void setFlavorCardTheme(View card, boolean selected) {
+        int fill = selected ? currentPalette.primarySurface : currentPalette.raisedSurface;
+        int stroke = selected ? currentPalette.accent : currentPalette.outline;
+        card.setBackground(roundDrawable(fill, stroke, 16));
+    }
+
+    private void setThemedButton(Button button, int fill, int text, int ripple) {
+        GradientDrawable shape = roundDrawable(fill, Color.TRANSPARENT, 28);
+        button.setBackground(new RippleDrawable(ColorStateList.valueOf(ripple), shape, null));
+        button.setTextColor(text);
+    }
+
+    private GradientDrawable roundDrawable(int fill, int stroke, int radiusDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(fill);
+        drawable.setCornerRadius(radiusDp * getResources().getDisplayMetrics().density);
+        if (stroke != Color.TRANSPARENT) {
+            drawable.setStroke(Math.max(1, (int) getResources().getDisplayMetrics().density), stroke);
+        }
+        return drawable;
+    }
+
+    private static class Palette {
+        final int background, surface, raisedSurface, primary, onPrimary, primarySurface;
+        final int accent, accentRipple, textPrimary, textSecondary, textTertiary;
+        final int error, errorSurface, outline, logBackground, logText;
+
+        Palette(String background, String surface, String raisedSurface, String primary,
+                String onPrimary, String primarySurface, String accent, String accentRipple,
+                String textPrimary, String textSecondary, String textTertiary,
+                String error, String errorSurface, String outline, String logBackground, String logText) {
+            this.background = Color.parseColor(background);
+            this.surface = Color.parseColor(surface);
+            this.raisedSurface = Color.parseColor(raisedSurface);
+            this.primary = Color.parseColor(primary);
+            this.onPrimary = Color.parseColor(onPrimary);
+            this.primarySurface = Color.parseColor(primarySurface);
+            this.accent = Color.parseColor(accent);
+            this.accentRipple = Color.parseColor(accentRipple);
+            this.textPrimary = Color.parseColor(textPrimary);
+            this.textSecondary = Color.parseColor(textSecondary);
+            this.textTertiary = Color.parseColor(textTertiary);
+            this.error = Color.parseColor(error);
+            this.errorSurface = Color.parseColor(errorSurface);
+            this.outline = Color.parseColor(outline);
+            this.logBackground = Color.parseColor(logBackground);
+            this.logText = Color.parseColor(logText);
+        }
+
+        static Palette forTheme(int theme) {
+            switch (theme) {
+                case 1:
+                    return new Palette("#071820", "#0D2630", "#143641", "#83E7E8",
+                            "#00363B", "#0B4850", "#83E7E8", "#386D72", "#E1F7F7",
+                            "#A3CACE", "#6F969A", "#FFB4AB", "#4A2528", "#31525A",
+                            "#06141A", "#C4E2E4");
+                case 2:
+                    return new Palette("#17131F", "#251D30", "#30263E", "#D0BCFF",
+                            "#381E72", "#4A326C", "#D0BCFF", "#735A99", "#F1EAF7",
+                            "#C9BFD4", "#90869B", "#FFB4AB", "#4A2537", "#51445D",
+                            "#120F18", "#D8CEE3");
+                case 3:
+                    return new Palette("#000000", "#0A0A0A", "#151515", "#80DEEA",
+                            "#00363F", "#063B42", "#80DEEA", "#28585F", "#F5F5F5",
+                            "#B0BEC5", "#777777", "#FFB4AB", "#351719", "#333333",
+                            "#000000", "#E0E0E0");
+                default:
+                    return new Palette("#111318", "#212329", "#2B2E35", "#A8C7FA",
+                            "#062E6F", "#1A437E", "#A8C7FA", "#425B7F", "#E2E2E6",
+                            "#9DA3AE", "#73777F", "#FFB4AB", "#411215", "#44474F",
+                            "#141519", "#C4C7C5");
+            }
         }
     }
 
     private void appendLog(final String text) {
         mainHandler.post(() -> {
             if (tvConsoleLog != null) {
+                boolean wasAtBottom = logScrollView == null ||
+                        logScrollView.getChildAt(0).getBottom() - logScrollView.getScrollY()
+                                <= logScrollView.getHeight() + 16;
                 tvConsoleLog.append(text + "\n");
-                final int scrollAmount = tvConsoleLog.getLayout() != null ?
-                        tvConsoleLog.getLayout().getLineTop(tvConsoleLog.getLineCount()) - tvConsoleLog.getHeight() : 0;
-                if (scrollAmount > 0) {
-                    tvConsoleLog.scrollTo(0, scrollAmount);
+                if (wasAtBottom && logScrollView != null) {
+                    logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
                 }
             }
         });
@@ -214,11 +584,11 @@ public class MainActivity extends Activity {
             }
             mainHandler.post(() -> {
                 if (isRootGranted) {
-                    tvRootStatus.setText("✓ Root: KernelSU Active (uid=0)");
-                    tvRootStatus.setTextColor(Color.parseColor("#A5D6A7"));
+                    tvRootStatus.setText(R.string.status_root_active_detail);
+                    setSemanticTextColor(tvRootStatus, Color.parseColor("#A5D6A7"));
                 } else {
-                    tvRootStatus.setText("✗ Root: Access Denied (KernelSU Required)");
-                    tvRootStatus.setTextColor(Color.parseColor("#FFB4AB"));
+                    tvRootStatus.setText(R.string.status_root_denied_detail);
+                    setSemanticTextColor(tvRootStatus, Color.parseColor("#FFB4AB"));
                 }
             });
 
@@ -231,21 +601,24 @@ public class MainActivity extends Activity {
 
                 mainHandler.post(() -> {
                     if (osVer != null && !osVer.trim().isEmpty()) {
-                        tvOsStatus.setText("Current Userspace: LineageOS " + osVer.trim());
-                        tvOsStatus.setTextColor(Color.parseColor("#78D9EC"));
+                        tvOsStatus.setText(getString(R.string.status_userspace_lineage, osVer.trim()));
+                        setSemanticTextColor(tvOsStatus, Color.parseColor("#78D9EC"));
                         if (tvHeaderSubtitle != null) {
-                            tvHeaderSubtitle.setText("Dual Userspace Switcher • LineageOS");
+                            tvHeaderSubtitle.setText(R.string.header_subtitle_lineage);
                         }
                     } else {
-                        tvOsStatus.setText("Current Userspace: Samsung One UI (Stock)");
-                        tvOsStatus.setTextColor(Color.parseColor("#FFD54F"));
+                        tvOsStatus.setText(R.string.status_userspace_oneui);
+                        setSemanticTextColor(tvOsStatus, Color.parseColor("#FFD54F"));
                         if (tvHeaderSubtitle != null) {
-                            tvHeaderSubtitle.setText("Dual Userspace Switcher • One UI");
+                            tvHeaderSubtitle.setText(R.string.header_subtitle_oneui);
                         }
                     }
                 });
             } catch (Exception e) {
-                mainHandler.post(() -> tvOsStatus.setText("Current Userspace: Samsung One UI"));
+                mainHandler.post(() -> {
+                    tvOsStatus.setText(R.string.status_userspace_oneui_short);
+                    setSemanticTextColor(tvOsStatus, Color.parseColor("#FFD54F"));
+                });
             }
 
             checkImageStatus();
@@ -262,21 +635,27 @@ public class MainActivity extends Activity {
 
                 mainHandler.post(() -> {
                     if (out != null && !out.contains("MISSING") && !out.trim().isEmpty()) {
-                        tvImageStatus.setText("Image: Installed & Ready (" + out.trim().replaceAll("\\s+", " ") + ")");
-                        tvImageStatus.setTextColor(Color.parseColor("#A5D6A7"));
-                        btnDownloadLineage.setText("Reinstall Image");
+                        tvImageStatus.setText(getString(R.string.status_image_installed,
+                                out.trim().replaceAll("\\s+", " ")));
+                        setSemanticTextColor(tvImageStatus, Color.parseColor("#A5D6A7"));
+                        downloadButtonIdleText = getString(R.string.btn_download_reinstall);
+                        if (!downloadRunning) btnDownloadLineage.setText(downloadButtonIdleText);
                         btnBootLineage.setEnabled(true);
                         btnBootLineage.setAlpha(1.0f);
                     } else {
-                        tvImageStatus.setText("Image: Not Installed (Missing system.raw)");
-                        tvImageStatus.setTextColor(Color.parseColor("#FFB4AB"));
-                        btnDownloadLineage.setText("Download & Install");
+                        tvImageStatus.setText(R.string.status_image_missing);
+                        setSemanticTextColor(tvImageStatus, Color.parseColor("#FFB4AB"));
+                        downloadButtonIdleText = getString(R.string.btn_download_lineage);
+                        if (!downloadRunning) btnDownloadLineage.setText(downloadButtonIdleText);
                         btnBootLineage.setEnabled(false);
                         btnBootLineage.setAlpha(0.5f);
                     }
                 });
             } catch (Exception e) {
-                mainHandler.post(() -> tvImageStatus.setText("Image Check Error: " + e.getMessage()));
+                mainHandler.post(() -> {
+                    tvImageStatus.setText(getString(R.string.status_image_error, e.getMessage()));
+                    setSemanticTextColor(tvImageStatus, Color.parseColor("#FFB4AB"));
+                });
             }
         });
     }
@@ -306,7 +685,7 @@ public class MainActivity extends Activity {
                     target.setExecutable(true, false);
                     target.setReadable(true, false);
                 } catch (Exception e) {
-                    appendLog("Error unpacking " + asset + ": " + e.getMessage());
+                    appendLog(getString(R.string.log_root_error_unpacking, asset, e.getMessage()));
                 }
             }
             if (isRootGranted) {
@@ -323,16 +702,50 @@ public class MainActivity extends Activity {
                     }).waitFor();
                 } catch (Exception ignored) {}
             }
-            appendLog("OneLineage engine assets unpacked & verified.");
+            appendLog(getString(R.string.log_assets_ready));
         });
     }
 
     private void downloadLineage() {
+        if (downloadRunning) {
+            if (downloadPauseEnabled) toggleDownloadPause();
+            return;
+        }
         if (!isRootGranted) {
-            appendLog("ERROR: Root privilege required to set up LineageOS!");
+            appendLog(getString(R.string.log_root_required_setup));
             return;
         }
         startNetworkDownload(selectedFlavor);
+    }
+
+    private void toggleDownloadPause() {
+        synchronized (downloadPauseLock) {
+            downloadPaused = !downloadPaused;
+            if (!downloadPaused) downloadPauseLock.notifyAll();
+        }
+
+        final boolean paused = downloadPaused;
+        mainHandler.post(() -> {
+            btnDownloadLineage.setText(paused ? R.string.btn_resume_download : R.string.btn_pause_download);
+            tvDownloadProgress.setText(paused
+            ? getString(R.string.progress_download_paused)
+                    : getString(R.string.progress_download_resuming));
+        });
+        setLogStatus(getString(paused ? R.string.status_paused : R.string.status_downloading));
+        appendLog(getString(paused ? R.string.log_download_paused : R.string.log_download_resumed));
+    }
+
+    private void waitWhileDownloadPaused() throws Exception {
+        synchronized (downloadPauseLock) {
+            while (downloadPaused) {
+                try {
+                    downloadPauseLock.wait();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new Exception("Download interrupted while paused", e);
+                }
+            }
+        }
     }
 
     private void downloadFileWithRedirects(String initialUrl, File targetFile, long expectedBytes) throws Exception {
@@ -363,7 +776,7 @@ public class MainActivity extends Activity {
                 currentUrl = loc.trim();
                 conn.disconnect();
                 redirectCount++;
-                appendLog("Following mirror redirect [" + redirectCount + "]...");
+                appendLog(getString(R.string.log_redirect, redirectCount));
                 continue;
             }
 
@@ -398,7 +811,10 @@ public class MainActivity extends Activity {
 
             byte[] buffer = new byte[65536];
             int read;
-            while ((read = in.read(buffer)) != -1) {
+            while (true) {
+                waitWhileDownloadPaused();
+                read = in.read(buffer);
+                if (read == -1) break;
                 out.write(buffer, 0, read);
                 currentBytes += read;
 
@@ -408,12 +824,14 @@ public class MainActivity extends Activity {
                     final int pct = (totalBytes > 0) ? (int) Math.min(100, (currentBytes * 100) / totalBytes) : 0;
                     final long elapsedSec = Math.max(1, (now - startMs) / 1000);
                     final double speedMb = (currentBytes / 1048576.0) / elapsedSec;
-                    final String progStr = String.format("Downloading: %d MB / %d MB (%d%%) • %.1f MB/s",
+                    final String progStr = getString(R.string.progress_downloading,
                             currentBytes / 1048576, totalBytes / 1048576, pct, speedMb);
-                    mainHandler.post(() -> {
-                        pbDownload.setProgress(pct);
-                        tvDownloadProgress.setText(progStr);
-                    });
+                    if (!downloadPaused) {
+                        mainHandler.post(() -> {
+                            pbDownload.setProgress(pct);
+                            tvDownloadProgress.setText(progStr);
+                        });
+                    }
                 }
             }
             out.flush();
@@ -427,21 +845,26 @@ public class MainActivity extends Activity {
     }
 
     private void startNetworkDownload(final Flavor flavor) {
+        if (downloadRunning) return;
+        downloadRunning = true;
+        downloadPaused = false;
+        downloadPauseEnabled = false;
         executor.execute(() -> {
-            setLogStatus("Preparing…");
+            setLogStatus(getString(R.string.status_preparing));
             mainHandler.post(() -> {
                 pbDownload.setVisibility(View.VISIBLE);
                 pbDownload.setIndeterminate(false);
                 pbDownload.setProgress(0);
                 tvDownloadProgress.setVisibility(View.VISIBLE);
-                tvDownloadProgress.setText("Connecting to official SourceForge release…");
+                tvDownloadProgress.setText(R.string.progress_connecting);
+                btnDownloadLineage.setText(R.string.btn_preparing);
                 btnDownloadLineage.setEnabled(false);
             });
 
-            appendLog("\n[SETUP] Initializing stage directory: " + STAGE_DIR);
+            appendLog(getString(R.string.log_setup_start, STAGE_DIR));
             try {
                 runRootCmdDrained("mkdir -p " + STAGE_DIR + " && chmod 777 " + STAGE_DIR);
-                appendLog("[SETUP] Wiping existing userdata for a fresh OOBE...");
+                appendLog(getString(R.string.log_wiping_userdata));
                 runRootCmdDrained(wipeUserDataCmd());
 
                 String downloadUrl = (flavor == Flavor.GAPPS) ? URL_GAPPS : URL_VANILLA;
@@ -455,45 +878,66 @@ public class MainActivity extends Activity {
                 // extractAssets() already does for the other staged files.
                 final File targetArchive = new File(getCacheDir(), "lineage_dl.7z");
 
-                appendLog("[NETWORK DOWNLOAD] Fetching " + flavor.name() + " edition directly via native HTTP engine...");
-                appendLog("URL: " + downloadUrl);
-                setLogStatus("Downloading…");
-
-                downloadFileWithRedirects(downloadUrl, targetArchive, totalBytes);
-
-                appendLog("✓ Download completed successfully! (" + (targetArchive.length() / 1048576) + " MB)");
-                setLogStatus("Extracting…");
+                appendLog(getString(R.string.log_network_fetch, flavor.name()));
+                appendLog(getString(R.string.log_url, downloadUrl));
+                setLogStatus(getString(R.string.status_downloading));
+                downloadPauseEnabled = true;
                 mainHandler.post(() -> {
-                    pbDownload.setIndeterminate(true);
-                    tvDownloadProgress.setText("Decompressing image with ARM64 7-Zip…");
+                    btnDownloadLineage.setText(R.string.btn_pause_download);
+                    btnDownloadLineage.setEnabled(true);
                 });
 
-                appendLog("Extracting " + targetArchive.getAbsolutePath() + " via native 7zz...");
+                downloadFileWithRedirects(downloadUrl, targetArchive, totalBytes);
+                downloadPauseEnabled = false;
+                synchronized (downloadPauseLock) {
+                    downloadPaused = false;
+                    downloadPauseLock.notifyAll();
+                }
+
+                appendLog(getString(R.string.log_download_complete, targetArchive.length() / 1048576));
+                setLogStatus(getString(R.string.status_extracting));
+                mainHandler.post(() -> {
+                    pbDownload.setIndeterminate(true);
+                    tvDownloadProgress.setText(R.string.progress_extracting);
+                    btnDownloadLineage.setText(R.string.btn_installing);
+                    btnDownloadLineage.setEnabled(false);
+                });
+
+                appendLog(getString(R.string.log_extracting_archive, targetArchive.getAbsolutePath()));
                 String extractCmd = "rm -f " + STAGE_DIR + "/*.img " + SYSTEM_RAW + "; " +
                                    STAGE_DIR + "/7zz x -y -o" + STAGE_DIR + " " + targetArchive.getAbsolutePath() + " && " +
                                    "mv -f " + STAGE_DIR + "/*.img " + SYSTEM_RAW + " && " +
                                    "rm -f " + targetArchive.getAbsolutePath() + " && chmod 644 " + SYSTEM_RAW;
                 int extRet = runRootCmdDrained(extractCmd);
                 if (extRet != 0 || !new File(SYSTEM_RAW).exists()) {
-                    throw new Exception("7zz extraction failed (exit " + extRet + ") - system.raw was not produced");
+                    throw new Exception(getString(R.string.log_extract_failed, extRet));
                 }
 
-                appendLog("✓ Extraction complete -> system.raw ready!");
+                appendLog(getString(R.string.log_extract_complete));
 
                 mainHandler.post(() -> {
                     pbDownload.setVisibility(View.GONE);
-                    tvDownloadProgress.setText("LineageOS 23.2 (" + flavor.name() + ") installed successfully!");
-                    btnDownloadLineage.setEnabled(true);
+                    tvDownloadProgress.setText(getString(R.string.progress_installed, flavor.name()));
                 });
-                setLogStatus("Ready");
+                setLogStatus(getString(R.string.status_ready));
                 checkImageStatus();
 
             } catch (Exception e) {
-                appendLog("Download / setup failed: " + e.getMessage());
-                setLogStatus("Error");
+                appendLog(getString(R.string.log_setup_failed, e.getMessage()));
+                setLogStatus(getString(R.string.status_error));
                 mainHandler.post(() -> {
                     pbDownload.setVisibility(View.GONE);
-                    tvDownloadProgress.setText("Setup failed: " + e.getMessage());
+                    tvDownloadProgress.setText(getString(R.string.progress_setup_failed, e.getMessage()));
+                });
+            } finally {
+                downloadPauseEnabled = false;
+                synchronized (downloadPauseLock) {
+                    downloadPaused = false;
+                    downloadPauseLock.notifyAll();
+                }
+                downloadRunning = false;
+                mainHandler.post(() -> {
+                    btnDownloadLineage.setText(downloadButtonIdleText);
                     btnDownloadLineage.setEnabled(true);
                 });
             }
@@ -530,17 +974,17 @@ public class MainActivity extends Activity {
 
     private void confirmDeleteLineage() {
         new AlertDialog.Builder(this)
-            .setTitle("Delete LineageOS Files?")
-            .setMessage("This will cleanly unmount the container, detach loop devices, and remove system.raw to free up ~3.5GB. You can reinstall anytime.")
-            .setPositiveButton("Delete", (dialog, which) -> deleteLineage())
-            .setNegativeButton("Cancel", null)
+            .setTitle(R.string.dialog_delete_title)
+            .setMessage(R.string.dialog_delete_message)
+            .setPositiveButton(R.string.dialog_delete_confirm, (dialog, which) -> deleteLineage())
+            .setNegativeButton(R.string.dialog_cancel, null)
             .show();
     }
 
     private void deleteLineage() {
         executor.execute(() -> {
-            setLogStatus("Cleaning…");
-            appendLog("\n[CLEANUP] Stopping running container processes & unmounting...");
+            setLogStatus(getString(R.string.status_cleaning));
+            appendLog(getString(R.string.log_cleanup_start));
             try {
                 // Only kill zygote64/surfaceflinger/vold/system_server by name if the
                 // LineageOS container's rootfs is actually mounted. If it isn't (e.g.
@@ -585,27 +1029,27 @@ public class MainActivity extends Activity {
                 }
                 p.waitFor();
                 if (stillPresent) {
-                    appendLog("✗ system.raw could not be fully removed (a loop device is still holding it busy). Try again, or reboot and retry.");
-                    setLogStatus("Error");
+                    appendLog(getString(R.string.log_cleanup_warning));
+                    setLogStatus(getString(R.string.status_error));
                 } else {
-                    appendLog("✓ LineageOS files deleted cleanly. All loop mounts detached!");
-                    setLogStatus("Idle");
+                    appendLog(getString(R.string.log_cleanup_done));
+                    setLogStatus(getString(R.string.status_idle));
                 }
                 checkImageStatus();
             } catch (Exception e) {
-                appendLog("Delete failed: " + e.getMessage());
-                setLogStatus("Error");
+                appendLog(getString(R.string.log_delete_failed, e.getMessage()));
+                setLogStatus(getString(R.string.status_error));
             }
         });
     }
 
     private void bootLineage() {
         if (!isRootGranted) {
-            appendLog("ERROR: Root privilege required to boot LineageOS!");
+            appendLog(getString(R.string.log_root_required_boot));
             return;
         }
-        appendLog("\n[START] Preparing LineageOS 23.2 takeover...");
-        setLogStatus("Switching…");
+        appendLog(getString(R.string.log_boot_start));
+        setLogStatus(getString(R.string.status_switching));
         executor.execute(() -> {
             try {
                 File filesDir = getFilesDir();
@@ -628,21 +1072,21 @@ public class MainActivity extends Activity {
                              "fi";
                 Process p = Runtime.getRuntime().exec(new String[]{suBinary, "-c", cmd});
                 p.waitFor();
-                appendLog("Takeover daemon spawned successfully. Display switching in progress...");
+                appendLog(getString(R.string.log_takeover_spawned));
             } catch (Exception e) {
-                appendLog("Launch error: " + e.getMessage());
-                setLogStatus("Error");
+                appendLog(getString(R.string.log_launch_failed, e.getMessage()));
+                setLogStatus(getString(R.string.status_error));
             }
         });
     }
 
     private void returnToOneUI() {
         if (!isRootGranted) {
-            appendLog("ERROR: Root privilege required to restore One UI!");
+            appendLog(getString(R.string.log_root_required_restore));
             return;
         }
-        appendLog("\n[START] Restoring One UI and resetting display...");
-        setLogStatus("Restoring…");
+        appendLog(getString(R.string.log_return_start));
+        setLogStatus(getString(R.string.status_restoring));
         executor.execute(() -> {
             try {
                 String stageScript = STAGE_DIR + "/return_to_oneui.sh";
@@ -657,18 +1101,18 @@ public class MainActivity extends Activity {
                              "fi";
                 Process p = Runtime.getRuntime().exec(new String[]{suBinary, "-c", cmd});
                 p.waitFor();
-                appendLog("One UI restore triggered successfully.");
+                appendLog(getString(R.string.log_restore_triggered));
             } catch (Exception e) {
-                appendLog("Restore error: " + e.getMessage());
-                setLogStatus("Error");
+                appendLog(getString(R.string.log_restore_failed, e.getMessage()));
+                setLogStatus(getString(R.string.status_error));
             }
         });
     }
 
     private void backupLauncher() {
         executor.execute(() -> {
-            setLogStatus("Backing up…");
-            appendLog("\nBacking up One UI Home Screen database...");
+            setLogStatus(getString(R.string.status_backing_up));
+            appendLog(getString(R.string.log_backup_start));
             try {
                 String cmd = "mkdir -p /data/local/tmp/lineage_backups && " +
                              "cp -a /data/user/0/com.sec.android.app.launcher/databases/* /data/local/tmp/lineage_backups/ 2>/dev/null && " +
@@ -680,19 +1124,19 @@ public class MainActivity extends Activity {
                     appendLog("  " + line);
                 }
                 p.waitFor();
-                appendLog("✓ Home screen database successfully snapshotted!");
-                setLogStatus("Idle");
+                appendLog(getString(R.string.log_backup_done));
+                setLogStatus(getString(R.string.status_idle));
             } catch (Exception e) {
-                appendLog("Backup failed: " + e.getMessage());
-                setLogStatus("Error");
+                appendLog(getString(R.string.log_backup_failed, e.getMessage()));
+                setLogStatus(getString(R.string.status_error));
             }
         });
     }
 
     private void restoreLauncher() {
         executor.execute(() -> {
-            setLogStatus("Restoring…");
-            appendLog("\nRestoring One UI Home Screen layout...");
+            setLogStatus(getString(R.string.status_restoring));
+            appendLog(getString(R.string.log_launcher_restore_start));
             try {
                 String cmd = "if [ -d /data/local/tmp/lineage_backups ]; then " +
                              "LAUNCHER_DATA=/data/user/0/com.sec.android.app.launcher; " +
@@ -712,10 +1156,10 @@ public class MainActivity extends Activity {
                     appendLog("  " + line);
                 }
                 p.waitFor();
-                setLogStatus("Idle");
+                setLogStatus(getString(R.string.status_idle));
             } catch (Exception e) {
-                appendLog("Restore failed: " + e.getMessage());
-                setLogStatus("Error");
+                appendLog(getString(R.string.log_launcher_restore_failed, e.getMessage()));
+                setLogStatus(getString(R.string.status_error));
             }
         });
     }
