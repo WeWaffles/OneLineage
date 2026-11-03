@@ -14,7 +14,7 @@ Hot-switch between stock **One UI** and a **LineageOS 23.2 (Android 16) GSI** on
 > Hey, Contributor RealThalesGit here, if you somewhat get throw back to one ui after getting stuck at lineage boot screen, check your manager modules.
 
 ## Requirements
-- A rooted samsung phone (the tested ones are: S26 Ultra and Samsung A25, both at One UI 8.5.) (Can be temp-root too.)
+- A rooted samsung phone (the tested ones are: S26 Ultra, Base S26, and Samsung A25, both at One UI 8.5.) (Can be temp-root too.)
 - Enough free space on `/data` for the extracted GSI
 - Internet access for the GSI download (LineageOS 23.2 GSI, EXT4, VANILLA or GAPPS builds from SourceForge)
 
