@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OneLineage</string>
+    <string name="title_dashboard">OneLineage</string>
+    <string name="desc_dashboard">Galaxy S26 Ultra 双用户空间切换器</string>
+
+    <string name="header_subtitle_oneui">双用户空间切换器 • One UI</string>
+    <string name="header_subtitle_lineage">双用户空间切换器 • LineageOS</string>
+    <string name="system_status_title">系统状态</string>
+    <string name="status_root_checking">正在检查 root 权限…</string>
+    <string name="status_root_granted">KernelSU Root 已激活</string>
+    <string name="status_root_denied">需要 Root 权限</string>
+    <string name="status_root_active_detail">✓ Root：KernelSU 已激活（uid=0）</string>
+    <string name="status_root_denied_detail">✗ Root：访问被拒绝（需要 KernelSU）</string>
+    <string name="status_userspace_scanning">当前用户空间：扫描中…</string>
+    <string name="status_userspace_lineage">当前用户空间：LineageOS %1$s</string>
+    <string name="status_userspace_oneui">当前用户空间：Samsung One UI（原厂）</string>
+    <string name="status_userspace_oneui_short">当前用户空间：Samsung One UI</string>
+    <string name="status_image_checking">LineageOS 镜像：检查中…</string>
+    <string name="status_image_installed">镜像：已安装并就绪（%1$s）</string>
+    <string name="status_image_missing">镜像：未安装（缺少 system.raw）</string>
+    <string name="status_image_error">镜像检查出错：%1$s</string>
+
+    <string name="appearance_title">外观</string>
+    <string name="open_settings">打开语言与主题设置</string>
+    <string name="settings_title">偏好设置</string>
+    <string name="settings_subtitle">个性化 OneLineage</string>
+    <string name="language_title">应用语言</string>
+    <string name="language_english">English</string>
+    <string name="language_portuguese_brazil">Português (Brasil)</string>
+    <string name="language_chinese">中文（简体）</string>
+    <string name="theme_title">主题配色</string>
+    <string name="theme_option_lineage">Lineage 蓝</string>
+    <string name="theme_option_ocean">海洋</string>
+    <string name="theme_option_violet">紫罗兰</string>
+    <string name="theme_option_amoled">AMOLED 黑</string>
+    <string name="theme_dialog_title">选择主题配色</string>
+    <string-array name="theme_names">
+        <item>@string/theme_option_lineage</item>
+        <item>@string/theme_option_ocean</item>
+        <item>@string/theme_option_violet</item>
+        <item>@string/theme_option_amoled</item>
+    </string-array>
+
+    <string name="switch_userspace_title">切换用户空间</string>
+    <string name="btn_boot_lineage">切换到 LineageOS</string>
+    <string name="btn_return_oneui">返回 One UI</string>
+    <string name="image_title">LineageOS 23.2 镜像</string>
+    <string name="image_variant_description">选择要从官方发布下载的版本：</string>
+    <string name="flavor_vanilla_title">Vanilla（纯净版 LineageOS）</string>
+    <string name="flavor_vanilla_description">轻量选项</string>
+    <string name="flavor_gapps_title">MindTheGapps 版</string>
+    <string name="flavor_gapps_description">官方 Google Play 商店与 Play 服务</string>
+    <string name="flavor_desc_vanilla">Vanilla：轻量选项</string>
+    <string name="flavor_desc_gapps">MindTheGapps：LineageOS 23.2 + Google Play 商店与服务。</string>
+
+    <string name="btn_download_lineage">下载并安装</string>
+    <string name="btn_download_reinstall">重新安装镜像</string>
+    <string name="btn_pause_download">暂停下载</string>
+    <string name="btn_resume_download">继续下载</string>
+    <string name="btn_preparing">准备中…</string>
+    <string name="btn_installing">安装中…</string>
+    <string name="btn_delete_lineage">删除 LineageOS 文件</string>
+    <string name="btn_backup_launcher">备份布局</string>
+    <string name="btn_restore_launcher">恢复布局</string>
+
+    <string name="progress_download_paused">下载已暂停。点击「继续下载」以恢复。</string>
+    <string name="progress_download_resuming">正在恢复下载…</string>
+    <string name="progress_connecting">正在连接官方 SourceForge 发布…</string>
+    <string name="progress_downloading">下载中：%1$d MB / %2$d MB（%3$d%%）• %4$.1f MB/s</string>
+    <string name="progress_extracting">正在用 ARM64 7-Zip 解压镜像…</string>
+    <string name="progress_installed">LineageOS 23.2（%1$s）安装成功！</string>
+    <string name="progress_setup_failed">安装失败：%1$s</string>
+
+    <string name="launcher_safety_title">One UI 主屏幕安全</string>
+    <string name="launcher_safety_description">为主屏幕布局与小部件做快照备份，防止电量耗尽或重启造成损坏。</string>
+    <string name="activity_log_title">活动日志</string>
+    <string name="status_idle">空闲</string>
+    <string name="log_initialized">OneLineage 已初始化。\n</string>
+
+    <string name="log_flavor_vanilla">Vanilla：轻量选项</string>
+    <string name="log_flavor_gapps">MindTheGapps：LineageOS 23.2 + Google Play 商店与服务。</string>
+    <string name="log_root_required_setup">错误：安装 LineageOS 需要 root 权限！</string>
+    <string name="log_root_required_boot">错误：启动 LineageOS 需要 root 权限！</string>
+    <string name="log_root_required_restore">错误：恢复 One UI 需要 root 权限！</string>
+    <string name="log_root_error_unpacking">解包 %1$s 出错：%2$s</string>
+    <string name="log_assets_ready">OneLineage 引擎资源已解包并校验完成。</string>
+    <string name="log_download_paused">下载已暂停。</string>
+    <string name="log_download_resumed">下载已恢复。</string>
+    <string name="status_paused">已暂停</string>
+    <string name="status_downloading">下载中…</string>
+    <string name="status_preparing">准备中…</string>
+    <string name="status_extracting">解压中…</string>
+    <string name="status_ready">就绪</string>
+    <string name="status_error">错误</string>
+    <string name="status_cleaning">清理中…</string>
+    <string name="status_switching">切换中…</string>
+    <string name="status_restoring">恢复中…</string>
+    <string name="status_backing_up">备份中…</string>
+    <string name="log_redirect">正在跟随镜像重定向 [%1$d]…</string>
+    <string name="log_setup_start">\n[SETUP] 正在初始化暂存目录：%1$s</string>
+    <string name="log_wiping_userdata">[SETUP] 正在清除现有用户数据以进行全新 OOBE…</string>
+    <string name="log_network_fetch">[网络下载] 通过原生 HTTP 引擎直接获取 %1$s 版本…</string>
+    <string name="log_url">URL：%1$s</string>
+    <string name="log_download_complete">✓ 下载成功完成！（%1$d MB）</string>
+    <string name="log_extracting_archive">正在通过原生 7zz 解压 %1$s…</string>
+    <string name="log_extract_failed">7zz 解压失败（退出码 %1$d）——未生成 system.raw</string>
+    <string name="log_extract_complete">✓ 解压完成 → system.raw 已就绪！</string>
+    <string name="log_setup_failed">下载/安装失败：%1$s</string>
+    <string name="dialog_delete_title">删除 LineageOS 文件？</string>
+    <string name="dialog_delete_message">这会干净地卸载容器、分离 loop 设备并删除 system.raw，释放约 3.5GB 空间。你可以随时重新安装。</string>
+    <string name="dialog_delete_confirm">删除</string>
+    <string name="dialog_cancel">取消</string>
+    <string name="log_cleanup_start">\n[CLEANUP] 正在停止运行中的容器进程并卸载…</string>
+    <string name="log_cleanup_warning">✗ system.raw 未能完全删除（仍有 loop 设备占用）。请重试，或重启后再试。</string>
+    <string name="log_cleanup_done">✓ LineageOS 文件已干净删除，所有 loop 挂载已分离！</string>
+    <string name="log_delete_failed">删除失败：%1$s</string>
+    <string name="log_boot_start">\n[START] 正在准备 LineageOS 23.2 接管…</string>
+    <string name="log_takeover_spawned">接管守护进程已成功启动，正在切换显示…</string>
+    <string name="log_launch_failed">启动出错：%1$s</string>
+    <string name="log_return_start">\n[START] 正在恢复 One UI 并重置显示…</string>
+    <string name="log_restore_triggered">One UI 恢复已成功触发。</string>
+    <string name="log_restore_failed">恢复失败：%1$s</string>
+    <string name="log_backup_start">\n正在备份 One UI 主屏幕数据库…</string>
+    <string name="log_backup_done">✓ 主屏幕数据库已成功快照！</string>
+    <string name="log_backup_failed">备份失败：%1$s</string>
+    <string name="log_launcher_restore_start">\n正在恢复 One UI 主屏幕布局…</string>
+    <string name="log_launcher_restore_failed">恢复失败：%1$s</string>
+</resources>
