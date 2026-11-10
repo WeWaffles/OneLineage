@@ -217,6 +217,8 @@ public class MainActivity extends Activity {
                 null, palette, () -> changeLanguage("en", dialog));
         addDrawerChoice(choices, getString(R.string.language_portuguese_brazil), selectedLanguage == 1,
                 null, palette, () -> changeLanguage("pt-BR", dialog));
+        addDrawerChoice(choices, getString(R.string.language_chinese), selectedLanguage == 2,
+                null, palette, () -> changeLanguage("zh-CN", dialog));
 
         TextView themeLabel = drawerSectionTitle(getString(R.string.theme_title), palette);
         LinearLayout.LayoutParams themeLabelParams = drawerParams(-1, -2);
@@ -315,7 +317,10 @@ public class MainActivity extends Activity {
 
     private int currentLanguageIndex() {
         Locale current = getResources().getConfiguration().getLocales().get(0);
-        return "pt".equalsIgnoreCase(current.getLanguage()) ? 1 : 0;
+        String language = current.getLanguage();
+        if ("pt".equalsIgnoreCase(language)) return 1;
+        if ("zh".equalsIgnoreCase(language)) return 2;
+        return 0;
     }
 
     private TextView drawerSectionTitle(String text, Palette palette) {
