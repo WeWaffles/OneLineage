@@ -369,6 +369,10 @@ cp -f "$STAGE/master_inner.sh" "$STAGE/data/master_inner.sh"
 chmod 755 "$STAGE/data/master_inner.sh"
 cp -f "$STAGE/zygote_exec" "$STAGE/data/zygote_exec"
 chmod 755 "$STAGE/data/zygote_exec"
+if [ -f "$STAGE/ol_bridge" ]; then
+    cp -f "$STAGE/ol_bridge" "$STAGE/data/ol_bridge"
+    chmod 755 "$STAGE/data/ol_bridge"
+fi
 
 # Launch takeover inside isolated mount namespace
 $BB unshare -m $BB sh "$STAGE/data/master_inner.sh" </dev/null >"$STAGE/data/takeover.log" 2>&1 &

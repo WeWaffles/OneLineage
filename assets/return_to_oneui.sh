@@ -11,6 +11,7 @@ pkill -9 -f "ctl.stop zygote" 2>/dev/null || true
 pkill -9 -f "kill -STOP" 2>/dev/null || true
 pkill -9 -f "ui_activator" 2>/dev/null || true
 pkill -9 -f "zygote_exec" 2>/dev/null || true
+pkill -9 -f "ol_bridge" 2>/dev/null || true
 # Stop the adb watchdog started by switch_to_lineage.sh before One UI's own
 # system_server comes back, so it cannot fight init over sys.usb.config.
 pkill -9 -f "adb_watchdog.sh" 2>/dev/null || true

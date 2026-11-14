@@ -50,6 +50,62 @@ exec 8<&-
 echo "[Pivoted Root] Testing su availability:"
 su -c id || echo "su check non-fatal"
 
+# --- Isolated mode (docs/ISOLATION.md phases 1-3) ---------------------------
+# Opt-in: touch /data/local/tmp/lineage_stage/data/local/tmp/ol_isolate on the
+# host before switching. Lineage gets its own binder registry (a private
+# binderfs instance over /dev/binderfs in this namespace only) and its own
+# keystore2 / gatekeeperd / credstore with state in Lineage's /data.
+# ol_bridge forwards One UI's hardware services in and Lineage's framework
+# services out, but never One UI's keystore, gatekeeper service, vold, Weaver
+# or authsecret. If anything fails before the guest starts, fall back to the
+# shared mode below, exactly as before.
+OL_ISOLATED=0
+if [ -f /data/local/tmp/ol_isolate ] && [ -x /data/ol_bridge ]; then
+    echo "[Pivoted Root] Isolated mode: setting up a private binder registry..."
+    P=/data/local/tmp/ol_binderfs
+    mkdir -p $P
+    rm -f /data/local/tmp/ol_bridge_ready
+    if $BB mount -t binder binder $P; then
+        /data/ol_bridge /dev/binderfs/binder $P/binder /data/local/tmp/ol_bridge_ready > /data/ol_bridge.log 2>&1 &
+        BRIDGE_PID=$!
+        sleep 0.5
+        for d in binder hwbinder vndbinder; do $BB mount --bind $P/$d /dev/binderfs/$d; done
+        /system/bin/servicemanager > /data/ol_sm.log 2>&1 &
+        SM_PID=$!
+        /system/bin/hwservicemanager > /data/ol_hwsm.log 2>&1 &
+        HWSM_PID=$!
+        VSM_PID=""
+        if [ -x /vendor/bin/vndservicemanager ]; then
+            /vendor/bin/vndservicemanager /dev/vndbinder > /data/ol_vsm.log 2>&1 &
+            VSM_PID=$!
+        fi
+        i=0
+        while [ ! -f /data/local/tmp/ol_bridge_ready ] && kill -0 $BRIDGE_PID 2>/dev/null && [ $i -lt 60 ]; do
+            sleep 0.5; i=$((i + 1))
+        done
+        if [ -f /data/local/tmp/ol_bridge_ready ]; then
+            OL_ISOLATED=1
+            echo "[Pivoted Root] Bridge ready: $(grep 'sync:' /data/ol_bridge.log | tail -n 1)"
+            # Lineage's own security daemons; their state stays in this /data.
+            mkdir -p /data/misc/keystore /data/misc/gatekeeper /data/misc/credstore
+            /system/bin/keystore2 /data/misc/keystore > /data/ol_keystore2.log 2>&1 &
+            /system/bin/gatekeeperd /data/misc/gatekeeper > /data/ol_gatekeeperd.log 2>&1 &
+            [ -x /system/bin/credstore ] && /system/bin/credstore /data/misc/credstore > /data/ol_credstore.log 2>&1 &
+            sleep 1
+            echo "[Pivoted Root] Lineage security daemons started (keystore2, gatekeeperd, credstore)"
+        else
+            echo "[Pivoted Root] !!! Bridge did not become ready; falling back to shared mode. See /data/ol_bridge.log"
+            kill $BRIDGE_PID $SM_PID $HWSM_PID $VSM_PID 2>/dev/null
+            sleep 0.5
+            for d in binder hwbinder vndbinder; do $BB umount -l /dev/binderfs/$d 2>/dev/null; done
+            $BB umount -l $P 2>/dev/null
+        fi
+    else
+        echo "[Pivoted Root] !!! Could not mount a private binderfs; staying in shared mode"
+    fi
+fi
+echo "[Pivoted Root] Binder mode: $([ $OL_ISOLATED = 1 ] && echo isolated || echo shared)"
+
 echo "[Pivoted Root] Starting LineageOS SurfaceFlinger..."
 # sf.log used to grow without bound: the guest's RenderEngine dumps LLVM IR for
 # every shader it compiles ("Global Value @fullLiteral...") and got to 300+ MB in
