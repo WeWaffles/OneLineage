@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Stand-in for Samsung Knox's content providers inside Lineage. Samsung's IMS
+     app (com.sec.imsservice) registers content observers on these authorities
+     at startup, and Android refuses an observer for an authority no app
+     provides, so without this the app dies before IMS starts. Every query
+     returns no rows; Knox policies are simply absent. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.onelineage.knoxstub"
+    android:versionCode="1"
+    android:versionName="1.0">
+    <uses-sdk android:minSdkVersion="34" android:targetSdkVersion="36" />
+    <application
+        android:label="Knox stub"
+        android:hasCode="true"
+        android:persistent="false">
+        <provider
+            android:name=".EmptyProvider"
+            android:authorities="com.sec.knox.provider;com.sec.knox.provider2"
+            android:exported="true"
+            android:multiprocess="false" />
+    </application>
+</manifest>

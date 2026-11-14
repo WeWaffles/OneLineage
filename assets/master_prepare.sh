@@ -75,6 +75,109 @@ mount | grep -q "$ROOTFS/linkerconfig " || $BB mount --rbind /linkerconfig "$ROO
 mount | grep -q "$ROOTFS/vendor " || $BB mount --bind /vendor "$ROOTFS/vendor"
 mount | grep -q "$ROOTFS/odm " || $BB mount --bind /odm "$ROOTFS/odm"
 mount | grep -q "$ROOTFS/vendor_dlkm " || $BB mount --bind /vendor_dlkm "$ROOTFS/vendor_dlkm"
+
+# --- Samsung's IMS app in the guest (VoLTE, SMS over IMS) -------------------
+# T-Mobile and other VoLTE-only carriers refuse both calls and texts without
+# IMS ("SMS over NAS is not supported"), and on a Samsung phone IMS is the One
+# UI system app com.sec.imsservice, which dies with One UI's framework. Copy
+# THIS phone's copy (never a bundled one) into a read-only overlay on the
+# guest's system_ext, so Lineage sees /system_ext/priv-app/OneLineageSecIms.
+# services_patched.jar admits it into android.uid.system from that path only
+# (tools/patches/sec_ims_signature.py); One UI's framework.jar is offered as
+# the optional library "secimshttpclient" so the app finds its Samsung
+# classes. Approach from OneOS (docs/SAMSUNG_IMS.md). Opt out with
+# $STAGE/data/local/tmp/ol_no_secims. Must run before the binds below that
+# land inside system_ext.
+SECIMS="$STAGE/secims"
+SECIMS_APP="$SECIMS/priv-app/OneLineageSecIms"
+rm -f "$STAGE/data/local/tmp/ol_secims_staged"
+if [ -f "$STAGE/data/local/tmp/ol_no_secims" ]; then
+    echo "Samsung IMS in the guest: off (ol_no_secims)"
+elif mount | grep -q " $ROOTFS/system/system_ext type overlay"; then
+    echo "Samsung IMS in the guest: overlay already mounted"
+    touch "$STAGE/data/local/tmp/ol_secims_staged"
+elif [ ! -f /system/priv-app/imsservice/imsservice.apk ] || [ ! -f /system/lib64/libsec-ims.so ]; then
+    echo "Samsung IMS in the guest: off (One UI has no imsservice)"
+else
+    rm -rf "$SECIMS"
+    mkdir -p "$SECIMS_APP/lib/arm64" "$SECIMS/framework" "$SECIMS/etc/permissions"
+    if cp /system/priv-app/imsservice/imsservice.apk "$SECIMS_APP/OneLineageSecIms.apk" &&
+       cp /system/lib64/libsec-ims.so /system/lib64/libresampler_ims.so /system/lib64/libaresdns.so "$SECIMS_APP/lib/arm64/" &&
+       cp /system/framework/imsmanager.jar /system/framework/rcsopenapi.jar "$SECIMS/framework/" &&
+       cp /system/framework/framework.jar "$SECIMS/framework/ol-secims-compat.jar" &&
+       cp /system/etc/permissions/privapp-permissions-com.sec.imsservice.xml "$SECIMS/etc/permissions/"; then
+        # Stand-in Knox providers (tools/knox_stub): the IMS app registers
+        # observers on com.sec.knox.provider2 at startup and dies without it.
+        if [ -f "$STAGE/OneLineageKnoxStub.apk" ]; then
+            mkdir -p "$SECIMS/app/OneLineageKnoxStub"
+            cp "$STAGE/OneLineageKnoxStub.apk" "$SECIMS/app/OneLineageKnoxStub/"
+        fi
+        # Samsung's EngineeringModeManager (in the compat jar) loads this JNI
+        # library; One UI's own public.libraries list makes it loadable from
+        # any class loader. Without it the app dies at start.
+        if [ -f /system/lib64/lib.engmodejni.samsung.so ] && [ -f /system/etc/public.libraries-engmodejni.samsung.txt ]; then
+            mkdir -p "$SECIMS/lib64"
+            cp /system/lib64/lib.engmodejni.samsung.so "$SECIMS/lib64/"
+            cp /system/etc/public.libraries-engmodejni.samsung.txt "$SECIMS/etc/"
+        fi
+        {
+            echo '<?xml version="1.0" encoding="utf-8"?>'
+            echo '<permissions>'
+            # Each shared library gets its own class loader, so the Samsung
+            # libraries must depend on the compat jar to see its classes
+            # (imsmanager's Capabilities needs android.os.SemSystemProperties).
+            echo '    <library name="secimshttpclient" file="/system_ext/framework/ol-secims-compat.jar" />'
+            echo '    <library name="imsmanager" file="/system_ext/framework/imsmanager.jar" dependency="secimshttpclient" />'
+            echo '    <library name="rcsopenapi" file="/system_ext/framework/rcsopenapi.jar" dependency="secimshttpclient" />'
+            # Optional libraries the app declares. vsimmanager is not optional
+            # in practice: it carries the Gson the app needs at startup.
+            for lib in vsimmanager EpdgManager svemanager; do
+                if [ -f "/system/framework/$lib.jar" ] && cp "/system/framework/$lib.jar" "$SECIMS/framework/"; then
+                    echo "    <library name=\"$lib\" file=\"/system_ext/framework/$lib.jar\" dependency=\"secimshttpclient\" />"
+                fi
+            done
+            echo '</permissions>'
+        } > "$SECIMS/etc/permissions/ol-secims-libraries.xml"
+        chmod -R a+rX "$SECIMS"
+        chcon -R u:object_r:system_file:s0 "$SECIMS" 2>/dev/null || true
+        # overlayfs refuses every layer on this /data (EINVAL), so the layer
+        # is a small tmpfs: the same tree with empty placeholders for the
+        # binaries (and the real XMLs), and the binaries are then bound from
+        # $SECIMS onto the placeholders inside the merged system_ext.
+        LAYER="$STAGE/secims_layer"
+        mkdir -p "$LAYER"
+        $BB umount -l "$LAYER" 2>/dev/null || true
+        $BB mount -t tmpfs -o size=4m,mode=755 tmpfs "$LAYER"
+        (cd "$SECIMS" && find . -type d) | while read -r d; do mkdir -p "$LAYER/$d"; done
+        (cd "$SECIMS" && find . -type f) | while read -r f; do
+            case "$f" in
+                *.xml) cp "$SECIMS/$f" "$LAYER/$f" ;;
+                *) touch "$LAYER/$f" ;;
+            esac
+        done
+        chmod -R a+rX "$LAYER"
+        chcon -R u:object_r:system_file:s0 "$LAYER" 2>/dev/null || true
+        if $BB mount -t overlay overlay -o "lowerdir=$LAYER:$ROOTFS/system/system_ext" "$ROOTFS/system/system_ext"; then
+            bound=1
+            for f in $(cd "$SECIMS" && find . -type f ! -name '*.xml'); do
+                $BB mount --bind "$SECIMS/$f" "$ROOTFS/system/system_ext/$f" || bound=0
+            done
+            if [ $bound = 1 ]; then
+                touch "$STAGE/data/local/tmp/ol_secims_staged"
+                echo "Samsung IMS in the guest: staged ($(du -sk "$SECIMS" | cut -f1) KB)"
+            else
+                echo "Samsung IMS in the guest: off (binding the binaries failed)"
+                $BB umount -l "$ROOTFS/system/system_ext" 2>/dev/null || true
+            fi
+        else
+            echo "Samsung IMS in the guest: off (overlay mount failed)"
+        fi
+    else
+        echo "Samsung IMS in the guest: off (copy failed)"
+        rm -rf "$SECIMS"
+    fi
+fi
+
 # apexd is a HOST daemon: it reports the Samsung apex set (/system/apex,
 # /system_ext/apex, /vendor/apex) to the container system_server, which then
 # tries to parse those exact paths inside this namespace. Keep the apex
@@ -595,12 +698,30 @@ cat > "$STAGE/data/local/tmp/app_storage_loop.sh" <<'APPLOOP'
 # left alone.
 OL_DENSITY=540
 (
-    while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 5; done
+    # sys.boot_completed is shared with One UI (already 1), so wait for the
+    # guest's own phone service, registered late in its boot.
+    while ! service check phone 2>/dev/null | grep -q ': found'; do sleep 5; done
+    sleep 10
     cur=$(settings get secure display_density_forced 2>/dev/null)
     case "$cur" in
         ""|null) wm density "$OL_DENSITY" 2>/dev/null &&
             echo "$(date) display density defaulted to $OL_DENSITY" >> /data/app_storage.log ;;
     esac
+    # Samsung IMS staged by master_prepare.sh: make it the device IMS service
+    # (calls, SMS over IMS) for both SIM slots. `cmd phone cc` is refused on a
+    # user build; `ims set-ims-service` is allowed and is not persisted, so
+    # this runs at every boot. The feature list (-f 0,1: EMERGENCY_MMTEL,
+    # MMTEL) is required: without it Android 16 overrides no features and
+    # nothing is bound. It is a device (-d) override because a carrier one is
+    # dropped again on the next carrier-config change.
+    if [ -f /data/local/tmp/ol_secims_staged ] && pm path com.sec.imsservice >/dev/null 2>&1; then
+        for s in 0 1; do
+            cmd phone ims set-ims-service -s $s -d -f 0,1 com.sec.imsservice >/dev/null 2>&1
+        done
+        echo "$(date) IMS: com.sec.imsservice set as MMTEL service (slot 1: $(cmd phone ims get-ims-service -s 1 -d -f 1))" >> /data/app_storage.log
+    elif [ -f /data/local/tmp/ol_secims_staged ]; then
+        echo "$(date) IMS: staged but com.sec.imsservice is not installed (signature carve-out missing?)" >> /data/app_storage.log
+    fi
 ) &
 last=""
 while true; do

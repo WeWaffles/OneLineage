@@ -295,6 +295,24 @@ kill -9 $(pidof zygote64) 2>/dev/null || true
 kill -9 $(pidof system_server) 2>/dev/null || true
 sleep 1
 
+# Clear One UI's networks from the host netd. The guest's ConnectivityService
+# programs this same netd and numbers its networks from 100 like One UI did,
+# so a stale One UI network made it fail with "Error creating network [101
+# CELLULAR]: File exists". That network then never connects, and nothing that
+# asks for it (Samsung IMS's IMS PDN request) is ever told it is available.
+# netd's built-in networks (99 local, 52 unreachable and below) stay.
+# Right after the kills netd can be busy: `dumpsys netd` may come back empty
+# and ndc may block, so every call is time-limited (a hang here leaves the
+# phone on the boot logo with no guest). With no list, sweep the range One UI
+# uses; destroying a netId that does not exist is a harmless error.
+ids=$(timeout 12 dumpsys netd 2>/dev/null | awk '$2 == "PHYSICAL" || $2 == "VIRTUAL" { if ($1 ~ /^[0-9]+$/) print $1 }')
+[ -n "$ids" ] || ids=$(seq 100 119)
+cleared=""
+for id in $ids; do
+    [ "$id" -ge 100 ] 2>/dev/null && timeout 3 ndc network destroy "$id" >/dev/null 2>&1 && cleared="$cleared $id"
+done
+echo "netd: cleared One UI networks:${cleared:- none}"
+
 # Stop the HOST media codec stack. The guest's libmedia binds `media.codec` from
 # the shared servicemanager, i.e. Samsung's mediaserver - whose IMediaCodecList
 # AIDL hash differs from the GSI's. The reply parcel is then parsed as garbage
