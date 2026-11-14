@@ -529,7 +529,9 @@ done
 if [ -z "$iface" ]; then
     # Mobile data: try Qualcomm rmnet_data*, Snapdragon IPA rmnet_ipa*, and
     # MediaTek ccmni* interfaces. Some Exynos builds use rmnet0/rmnet1.
-    for d in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' \
+    # `ip -o link` prints stacked links as "rmnet_data7@rmnet_ipa0": strip
+    # the parent, or no interface name ever matches.
+    for d in $(ip -o link show 2>/dev/null | awk -F': ' '{sub(/@.*/, "", $2); print $2}' \
                | grep -E '^(rmnet_data|rmnet_ipa|ccmni|rmnet)[0-9]'); do
         if have_v4 "$d"; then iface=$d; break; fi
     done
@@ -540,10 +542,33 @@ subnet=$(ip route show table all 2>/dev/null | awk -v d="$iface" \
 [ -z "$subnet" ] && exit 0
 gw=$(ip route show table all 2>/dev/null | awk -v d="$iface" \
     '$1=="default" && $2=="via" && $4=="dev" && $5==d && $3 ~ /^[0-9]+\./ {print $3; exit}')
-# no IPv4 default anywhere (netd never installed one): assume the first host
-[ -z "$gw" ] && gw="${subnet%.*}.1"
 ip route replace "$subnet" dev "$iface" table 4242 2>/dev/null
-ip route replace default via "$gw" dev "$iface" table 4242 2>/dev/null
+if [ -n "$gw" ]; then
+    ip route replace default via "$gw" dev "$iface" table 4242 2>/dev/null
+else
+    # No IPv4 default anywhere (netd never installed one). Mobile links are
+    # raw-IP point-to-point (T-Mobile's gateway 192.0.0.7 is not the subnet's
+    # first host), so route straight out of the device; wifi needs a next
+    # hop, so guess the first host there.
+    case "$iface" in
+        wlan*) ip route replace default via "${subnet%.*}.1" dev "$iface" table 4242 2>/dev/null ;;
+        *)     ip route replace default dev "$iface" table 4242 2>/dev/null ;;
+    esac
+fi
+# IPv6: the kernel puts the router-advertised default in its own table
+# (ifindex + 1000), which no rule reaches. Copy it into 4242 as well;
+# IPv6-only carriers (T-Mobile) send most traffic, DNS included, over it.
+gw6=$(ip -6 route show table all 2>/dev/null | awk -v d="$iface" \
+    '$1=="default" && $2=="via" && $4=="dev" && $5==d {print $3; exit}')
+if [ -n "$gw6" ]; then
+    ip -6 route replace default via "$gw6" dev "$iface" table 4242 2>/dev/null
+    cur6=$(ip -6 rule show 2>/dev/null | awk '/^14999:/{print $NF; exit}')
+    if [ "$cur6" != "4242" ]; then
+        ip -6 rule del priority 14999 2>/dev/null
+        ip -6 rule add from all lookup 4242 priority 14999 2>/dev/null
+        echo "net route repaired (v6): $iface gw $gw6"
+    fi
+fi
 # Priority must beat the per-uid rules netd already installed for previous
 # networks (15040/29040/29998): app sockets carry an fwmark, so a catch-all
 # placed after those still sends them into a dead table even though root's
@@ -553,7 +578,7 @@ if [ "$cur" != "4242" ]; then
     ip rule del priority 14999 2>/dev/null
     ip rule add from all lookup 4242 priority 14999 2>/dev/null
     ip rule del priority 31999 2>/dev/null
-    echo "net route repaired: $iface $subnet gw $gw"
+    echo "net route repaired: $iface $subnet gw ${gw:-direct}"
 fi
 exit 0
 NETFIX
