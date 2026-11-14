@@ -10,6 +10,19 @@ export BB
 export RP
 export STAGE
 
+# One takeover at a time: a second run while the first is still going starts a
+# second surfaceflinger/zygote pair that fights the first over the composer.
+LOCK="$STAGE/.switch.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+    OLD=$(cat "$LOCK/pid" 2>/dev/null)
+    if [ -n "$OLD" ] && kill -0 "$OLD" 2>/dev/null; then
+        echo "A switch is already running (PID $OLD), not starting another."
+        exit 1
+    fi
+fi
+echo $$ > "$LOCK/pid"
+trap 'rm -rf "$LOCK"' EXIT
+
 set_prop() {
     if [ -n "$RP" ] && [ -x "$RP" ]; then
         "$RP" "$1" "$2" 2>/dev/null || true
@@ -222,6 +235,15 @@ pkill -f "while true; do [ \"\$(getprop init.svc.zygote)\"" 2>/dev/null || true
 pkill -f "while true; do for p in \\\$(pidof audioserver cameraserver)" 2>/dev/null || true
 setprop ctl.stop zygote
 setprop ctl.stop surfaceflinger
+# DnsResolver (inside netd) hands out its unstable interface only once per
+# process. The host system_server already took it, so the guest
+# ConnectivityService dies with "Already called by AID_SYSTEM". Restart netd
+# now that the host system_server is gone so the guest can claim it.
+setprop ctl.restart netd 2>/dev/null || true
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    [ "$(getprop init.svc.netd)" = "running" ] && break
+    sleep 0.5
+done
 # audioserver/cameraserver are deliberately left running. The guest shares this
 # binder namespace, and its AudioService.<init> -> AudioDeviceBroker.init ->
 # AudioSystem::addAudioPortCallback waits on media.audiopolicy with no timeout:
@@ -254,7 +276,13 @@ sleep 1
 # send because of its "sent" sound (playSentSound), and any app doing the same
 # would die too. Keep only the codec processes down, which is what causes the
 # spin described above.
-setprop ctl.start media 2>/dev/null || true
+# PixelOS on the S26: there is no media.codec; MediaCodecList comes from
+# media.player (IMediaPlayerService::getCodecList), and Samsung's mediaserver
+# numbers that interface differently, so the same garbage-list spin happens
+# through mediaserver itself. Stop the HOST mediaserver; master_inner.sh starts
+# the GUEST /system/bin/mediaserver, which registers a matching media.player.
+setprop ctl.stop media 2>/dev/null || true
+kill -9 $(pidof mediaserver) 2>/dev/null || true
 for svc in media.codec media.metrics; do
     setprop ctl.stop $svc 2>/dev/null || true
 done
@@ -280,6 +308,13 @@ while true; do
         setprop ctl.stop media.metrics 2>/dev/null || true
         kill -9 \$(pidof media.metrics) 2>/dev/null || true
     fi
+    # Only the HOST mediaserver (root '/'); the guest one runs pivoted.
+    for p in \$(pidof mediaserver); do
+        if [ \"\$(readlink /proc/\$p/root)\" = \"/\" ]; then
+            setprop ctl.stop media 2>/dev/null || true
+            kill -9 \$p 2>/dev/null || true
+        fi
+    done
 done
 " </dev/null >/dev/null 2>&1 &
     echo "media.codec suppressor started"

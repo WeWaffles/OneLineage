@@ -55,9 +55,61 @@ mkdir -p "$ROOTFS/postinstall" "$ROOTFS/dev" "$ROOTFS/proc" "$ROOTFS/sys" \
     "$ROOTFS/linkerconfig" "$ROOTFS/vendor" "$ROOTFS/odm" "$ROOTFS/vendor_dlkm" \
     "$ROOTFS/mnt" "$ROOTFS/storage" "$ROOTFS/apex" "$ROOTFS/data"
 
+echo "=== 3b. Building guest aconfig flag storage ==="
+# Android 16 reads feature flags from /metadata/aconfig. Without it every flag
+# reads as off, so flag-gated permissions (android.permission.RANGING) are never
+# defined and system_server dies in AppOpService.systemReady. Start from the
+# host copy (right for vendor and the host apexes the guest uses) and replace
+# the system/system_ext/product storage with the GSI's own files.
+ACONFIG="$STAGE/metadata/aconfig"
+if [ -d /metadata/aconfig ]; then
+    rm -rf "$STAGE/metadata"
+    mkdir -p "$STAGE/metadata"
+    cp -a /metadata/aconfig "$STAGE/metadata/"
+    for c in system system_ext product; do
+        SRC=""
+        for d in "$ROOTFS/system/$c/etc/aconfig" "$ROOTFS/$c/etc/aconfig"; do
+            [ "$c" = "system" ] && d="$ROOTFS/system/etc/aconfig"
+            [ -f "$d/package.map" ] && { SRC="$d"; break; }
+        done
+        if [ -z "$SRC" ]; then
+            echo "WARNING: no GSI aconfig storage for $c"
+            continue
+        fi
+        cp -f "$SRC/package.map" "$ACONFIG/maps/$c.package.map"
+        cp -f "$SRC/flag.map" "$ACONFIG/maps/$c.flag.map"
+        for sub in boot flags; do
+            cp -f "$SRC/flag.val" "$ACONFIG/$sub/$c.val"
+            cp -f "$SRC/flag.info" "$ACONFIG/$sub/$c.info"
+        done
+        # Host overrides name Samsung flags that do not exist in the GSI.
+        rm -f "$ACONFIG/flags/${c}_local_overrides.pb"
+        echo "Guest aconfig storage for $c from $SRC"
+    done
+    chown -R 1000:1000 "$STAGE/metadata" 2>/dev/null
+    chmod -R a+rX "$STAGE/metadata" 2>/dev/null
+    chcon -R u:object_r:aconfig_storage_metadata_file:s0 "$STAGE/metadata/aconfig" 2>/dev/null
+    if [ ! -d "$ROOTFS/metadata" ]; then
+        # The GSI root has no /metadata mountpoint; add one to system.raw once.
+        $BB mount -o remount,rw "$ROOTFS" && mkdir -p "$ROOTFS/metadata"
+        $BB mount -o remount,ro "$ROOTFS"
+    fi
+    mount | grep -q "$ROOTFS/metadata " || $BB mount --bind "$STAGE/metadata" "$ROOTFS/metadata"
+fi
+
 echo "=== 4. Setting up Core System Bind Mounts ==="
 mount | grep -q "$ROOTFS/proc " || $BB mount -t proc proc "$ROOTFS/proc"
 mount | grep -q "$ROOTFS/sys " || $BB mount -t sysfs sysfs "$ROOTFS/sys"
+# A fresh sysfs has none of the host's submounts (/sys/fs/cgroup, /sys/fs/bpf,
+# /sys/fs/selinux, ...). PixelOS aborts without them: zygote in
+# createProcessGroup (/sys/fs/cgroup/system/uid_1000) and system_server in
+# ClatCoordinator (/sys/fs/bpf/net_shared). Bind every host mount under /sys.
+for m in $($BB awk '$2 ~ "^/sys/" {print $2}' /proc/mounts | sort -u); do
+    [ -d "$m" ] || continue
+    mount | grep -q "$ROOTFS$m " && continue
+    mkdir -p "$ROOTFS$m" 2>/dev/null
+    $BB mount --bind "$m" "$ROOTFS$m" 2>/dev/null && echo "Bound $m"
+done
 
 if [ ! -e /dev/binderfs/binder ]; then
     mount -t binder binder /dev/binderfs 2>/dev/null || true
@@ -85,6 +137,44 @@ if [ -d /system_ext/apex ]; then
     mount | grep -q "$ROOTFS/system_ext/apex " || $BB mount --bind /system_ext/apex "$ROOTFS/system_ext/apex"
 fi
 mount | grep -q "$ROOTFS/mnt " || $BB mount --rbind /mnt "$ROOTFS/mnt"
+# NetworkStack shares android.uid.networkstack with the tethering apk from the
+# HOST tethering apex (Google-signed). The GSI's own NetworkStack.apk is signed
+# with the GSI's keys, so PMS aborts with "Signature mismatch ... for shared
+# user android.uid.networkstack". Present the host's NetworkStack instead.
+GSI_NS="$ROOTFS/system/priv-app/NetworkStack"
+HOST_NS=""
+for d in /system/priv-app/NetworkStackGoogle /system/priv-app/NetworkStack; do
+    [ -d "$d" ] && ls "$d"/*.apk >/dev/null 2>&1 && { HOST_NS="$d"; break; }
+done
+if [ -d "$GSI_NS" ] && [ -n "$HOST_NS" ]; then
+    $BB umount -l "$GSI_NS" 2>/dev/null || true
+    $BB mount --bind "$HOST_NS" "$GSI_NS" && echo "Bound host NetworkStack $HOST_NS -> $GSI_NS"
+    # packages.xml from a boot with the GSI-signed NetworkStack pins the old
+    # signature on the shared user; drop it once so PMS re-learns it. Android 16
+    # restores packages.xml from packages.xml.reservecopy, and the parsed-package
+    # cache keeps the old apk path, so both have to go as well.
+    if [ ! -f "$STAGE/data/.host_networkstack_v2" ]; then
+        rm -f "$STAGE/data/system/packages.xml" "$STAGE/data/system/packages-backup.xml" \
+              "$STAGE/data/system/packages.xml.reservecopy" \
+              "$STAGE/data/system/packages.list" 2>/dev/null
+        rm -rf "$STAGE/data/system/package_cache" 2>/dev/null
+        touch "$STAGE/data/.host_networkstack_v2"
+    fi
+else
+    echo "WARNING: host NetworkStack not found, keeping the GSI one"
+fi
+
+# OnePlus-modified apps left in the waffle build crash-loop without the OnePlus
+# framework (com.qti.phone: ClassNotFoundException com.oplus.evolution.*,
+# restarted every ~50 ms). Hide them behind an empty directory.
+mkdir -p "$STAGE/empty_dir"
+for app in system/system_ext/app/QtiTelephonyService system_ext/app/QtiTelephonyService; do
+    if [ -d "$ROOTFS/$app" ] && ! mount | grep -q "$ROOTFS/$app "; then
+        $BB mount --bind "$STAGE/empty_dir" "$ROOTFS/$app" && echo "Hid $app"
+        break
+    fi
+done
+
 if [ -f "$STAGE/services_patched.jar" ]; then
     $BB umount -l "$ROOTFS/system/framework/services.jar" 2>/dev/null || true
     $BB mount --bind "$STAGE/services_patched.jar" "$ROOTFS/system/framework/services.jar"
@@ -585,18 +675,27 @@ mount_payload() {
     TARGET="$2"
     IMG="$STAGE/${NAME}_payload.img"
     DEST="$ROOTFS/apex/$TARGET"
+    # A cached payload smaller than 64K is a failed extraction (seen: 0 and 4096
+    # bytes), which leaves the apex dir empty and kills zygote. Re-extract it,
+    # trying busybox unzip first and the system unzip as a fallback.
+    [ -f "$IMG" ] && [ "$(stat -c %s "$IMG" 2>/dev/null || echo 0)" -lt 65536 ] && rm -f "$IMG"
     if [ ! -f "$IMG" ]; then
         CAPEX="$ROOTFS/system/apex/com.android.${NAME}.capex"
         APEX="$ROOTFS/system/apex/com.android.${NAME}.apex"
-        if [ -f "$CAPEX" ]; then
-            $BB unzip -p "$CAPEX" original_apex > "$STAGE/temp_${NAME}.apex" 2>/dev/null
-            $BB unzip -p "$STAGE/temp_${NAME}.apex" apex_payload.img > "$IMG" 2>/dev/null
-            rm -f "$STAGE/temp_${NAME}.apex"
-        elif [ -f "$APEX" ]; then
-            $BB unzip -p "$APEX" apex_payload.img > "$IMG" 2>/dev/null
-        fi
+        for UZ in "$BB unzip" "unzip"; do
+            if [ -f "$CAPEX" ]; then
+                $UZ -p "$CAPEX" original_apex > "$STAGE/temp_${NAME}.apex" 2>/dev/null
+                $UZ -p "$STAGE/temp_${NAME}.apex" apex_payload.img > "$IMG" 2>/dev/null
+                rm -f "$STAGE/temp_${NAME}.apex"
+            elif [ -f "$APEX" ]; then
+                $UZ -p "$APEX" apex_payload.img > "$IMG" 2>/dev/null
+            fi
+            [ "$(stat -c %s "$IMG" 2>/dev/null || echo 0)" -ge 65536 ] && break
+            echo "WARNING: $NAME payload extraction with '$UZ' failed"
+            rm -f "$IMG"
+        done
     fi
-    [ -f "$IMG" ] || return 0
+    [ -f "$IMG" ] || { echo "WARNING: no payload for $NAME, /apex/$TARGET will be empty"; return 0; }
     if mount | grep "$DEST " | grep -q "/dev/block/dm-"; then
         $BB umount -l "$DEST" 2>/dev/null || true
         for vdir in "$ROOTFS/apex/${TARGET}"@*; do
@@ -627,9 +726,15 @@ mount_payload "i18n" "com.android.i18n"
 mount_payload "runtime" "com.android.runtime"
 mount_payload "sdkext" "com.android.sdkext"
 mount_payload "nfcservices" "com.android.nfcservices"
-mount_payload "tethering" "com.android.tethering"
+# tethering: keep the HOST apex. Its BpfNetMaps must match the BPF maps the
+# host netbpfload created; the GSI copy fails with "Cannot open netd
+# configuration map" (EAGAIN) and kills system_server.
+rm -f "$STAGE/tethering_payload.img"
 mount_payload "crashrecovery" "com.android.crashrecovery"
-mount_payload "cellbroadcast" "com.android.cellbroadcast"
+# cellbroadcast: keep the HOST apex too. CellBroadcastService shares
+# android.uid.networkstack with the host tethering/NetworkStack, so the GSI copy
+# fails PMS with "Signature mismatch ... for shared user".
+rm -f "$STAGE/cellbroadcast_payload.img"
 mount_payload "extservices" "com.android.extservices"
 mount_payload "permission" "com.android.permission"
 mount_payload "wifi" "com.android.wifi"

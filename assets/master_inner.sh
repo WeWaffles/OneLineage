@@ -114,5 +114,17 @@ echo "[Pivoted Root] App storage sweeper started..."
 echo "[Pivoted Root] Cleaning stale sockets..."
 rm -f /dev/socket/zygote /dev/socket/usap_pool_primary 2>/dev/null || true
 
+# Keep a logcat on disk: the guest UsbService resets the USB gadget during boot,
+# which drops adb, so a live logcat from the PC stops right when it matters.
+# Ends up at $STAGE/data/boot_logcat.txt* on the host.
+rm -f /data/boot_logcat.txt*
+nohup logcat -b all -v threadtime -f /data/boot_logcat.txt -r 16384 -n 4 </dev/null >/dev/null 2>&1 &
+echo "[Pivoted Root] Boot logcat PID: $!"
+
+# Guest mediaserver: registers a media.player whose IMediaPlayerService matches
+# the guest libmedia (the host one is stopped by switch_to_lineage.sh).
+nohup sh -c 'while true; do /system/bin/mediaserver; sleep 2; done' </dev/null >/data/mediaserver.log 2>&1 &
+echo "[Pivoted Root] Guest mediaserver loop PID: $!"
+
 echo "[Pivoted Root] Launching LineageOS Zygote & SystemServer via zygote_exec..."
 exec /data/zygote_exec
