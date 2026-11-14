@@ -39,6 +39,27 @@ mkdir -p /mnt/user/0
 $BB mount -t tmpfs tmpfs /mnt/user/0 2>/dev/null || true
 mkdir -p /mnt/user/0/emulated
 $BB mount --bind /data/media/0 /mnt/user/0/emulated 2>/dev/null || true
+# Apps get /storage from /mnt/installer/0 (installers like the Play Store) or
+# /mnt/androidwritable/0, not /mnt/user/0. The /mnt tree is a copy of One
+# UI's, so those two still held One UI's FUSE mounts, which go dead with its
+# MediaProvider ("Transport endpoint is not connected"): apps saw no shared
+# storage and the Play Store refused every install for lack of space. Do what
+# init.rc does on a normal boot: /mnt shared, and /mnt/installer and
+# /mnt/androidwritable as slave binds of /mnt/user. The guest's vold clears
+# /mnt/user/0 at start and mounts its FUSE at /mnt/user/0/emulated, which
+# then reaches both binds and every app namespace forked later.
+if $BB mount --make-shared /mnt 2>/dev/null; then
+    for d in installer androidwritable; do
+        mkdir -p /mnt/$d
+        if $BB mount --bind /mnt/user /mnt/$d 2>/dev/null && $BB mount --make-slave /mnt/$d 2>/dev/null; then
+            echo "[Pivoted Root] /mnt/$d follows /mnt/user"
+        else
+            echo "[Pivoted Root] WARN: could not link /mnt/$d to /mnt/user"
+        fi
+    done
+else
+    echo "[Pivoted Root] WARN: /mnt is not a mount point; shared storage may be missing in apps"
+fi
 
 echo "[Pivoted Root] Rootfs successfully activated as /"
 echo "[Pivoted Root] Testing /dev/null resolution:"
