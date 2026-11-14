@@ -180,6 +180,35 @@ if [ ! -s "$NAV_IDMAP" ] && [ -f "$NAV_OV" ]; then
         || echo "[Pivoted Root] idmap FAILED: $(head -n1 /data/idmap.log 2>/dev/null)"
 fi
 
+# Feature-flag storage. A normal boot runs `aconfigd-system platform-init`
+# from init (aconfigd.rc) to build /metadata/aconfig; the guest skips init, so
+# there was none and the package manager treated flag-gated manifest entries as
+# off. Permissions like QUERY_ADVANCED_PROTECTION_MODE (Google Messages needs
+# it and crashed at start) then did not exist at all.
+mkdir -p /metadata/aconfig/flags /metadata/aconfig/maps /metadata/aconfig/boot
+chown root:system /metadata/aconfig /metadata/aconfig/flags /metadata/aconfig/maps /metadata/aconfig/boot 2>/dev/null
+chmod 775 /metadata/aconfig /metadata/aconfig/maps /metadata/aconfig/boot
+chmod 770 /metadata/aconfig/flags
+if [ -x /system/bin/aconfigd-system ]; then
+    if timeout 30 /system/bin/aconfigd-system platform-init > /data/aconfigd.log 2>&1; then
+        chown -R system:system /metadata/aconfig/flags /metadata/aconfig/maps /metadata/aconfig/boot 2>/dev/null
+        echo "[Pivoted Root] aconfig storage ready ($(ls /metadata/aconfig/maps | wc -l) maps)"
+    else
+        echo "[Pivoted Root] WARN: aconfig platform-init failed: $(tail -n1 /data/aconfigd.log)"
+    fi
+fi
+
+# The guest's own idmap2d. Without it, system_server's ctl.start reaches HOST
+# init and the guest talks to One UI's idmap2d, which checks One UI's
+# /system/product and /data/resource-cache, not the guest's: OMS marks the
+# gesture-nav overlay STATE_NO_IDMAP (the navbar falls back to 3 buttons), and
+# the Monet accent overlays (.frro) are written where the guest never looks,
+# so every app logs a stack trace per resource load (thousands a second: heat).
+# Registered in the guest's servicemanager, this one is found first. Its
+# ctl.stop from system_server goes to host init, so it stays up.
+/system/bin/idmap2d > /data/idmap2d.log 2>&1 &
+echo "[Pivoted Root] guest idmap2d PID: $!"
+
 # Newly installed apps have no data directories (the guest has no installd), and
 # zygote kills their first launch with "Failed to mount /data_mirror/...". This
 # sweep creates them while Lineage runs, so Play Store/Aurora installs become
