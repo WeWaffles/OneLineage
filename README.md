@@ -31,8 +31,10 @@ Hot-switch between stock **One UI** and a **LineageOS 23.2 (Android 16) GSI** on
 ## Patches
 
 ### Patched system files (bind-mounted over the GSI)
-- `services_patched.jar` over `system/framework/services.jar`
-- `framework_patched.jar` over `system/framework/framework.jar`
+- `services_patched.jar` over `system/framework/services.jar`. On the `onepixel` branch this is PixelOS 16.2's own `services.jar` with two methods stubbed by `dexpatch.py` (from the `onehyper` branch) and 4-byte aligned:
+  - `LockSettingsService.migrateUserToSpWithBoundKeysLocked`, a key migration the container must not run.
+  - `SystemServer.startApexServices`. Host apexd reports Samsung APEX services.
+- `framework_patched.jar` (LineageOS only): not shipped on `onepixel`, so the guest uses PixelOS's stock `framework.jar`. The app deletes any copy left from an older install.
 - `PermissionController_patched.apk`: removes the `android.permission.RANGING` reference so runtime-permission dialogs stop crashing (Samsung's PermissionController needs a permission the LineageOS 23.2 platform doesn't define)
 - Optional bind-mounts when present: `framework-res_patched.apk`, `libaudio_aidl_conversion_common_cpp_patched.so`, `libaudioclient_aidl_conversion_patched.so`
 
