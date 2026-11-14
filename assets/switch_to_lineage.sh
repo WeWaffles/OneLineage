@@ -161,7 +161,14 @@ set_prop ro.control_privapp_permissions log
 
 # --- ONEUI PROTECTION & RESCUEPARTY DISABLE ---
 echo "=== [1/6] Protecting OneUI Home Screen and Disabling RescueParty ==="
-set_prop persist.sys.disable_rescue true
+# Memory only: resetprop without -p never writes /data/property, so One UI
+# never inherits this after a reboot. Plain setprop WOULD persist it, so skip
+# it when resetprop is missing instead of falling back.
+if [ -n "$RP" ] && [ -x "$RP" ]; then
+    "$RP" persist.sys.disable_rescue true 2>/dev/null || true
+else
+    echo "NOTE: resetprop not found; leaving persist.sys.disable_rescue untouched (rescue_boot_count suppressor still runs)."
+fi
 set_prop sys.rescue_boot_count 0
 # Periodically reset the rescue boot counter. Samsung's init increments it on
 # every zygote crash, and RescueParty triggers a factory-reset prompt (or an
