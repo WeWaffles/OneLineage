@@ -588,6 +588,20 @@ cat > "$STAGE/data/local/tmp/app_storage_loop.sh" <<'APPLOOP'
 #!/system/bin/sh
 # Watches for installs/removals, gives the new package its data dirs, and makes
 # the launcher re-query so the app actually shows up.
+# Default display density for Lineage: 450 (the panel's native value) is very
+# small on a 1440-wide screen. Set it as a guest-only override once booted,
+# and only when no density was chosen yet, so a size picked in Settings or
+# with `wm density` sticks. ro.sf.lcd_density is shared with One UI, so it is
+# left alone.
+OL_DENSITY=540
+(
+    while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 5; done
+    cur=$(settings get secure display_density_forced 2>/dev/null)
+    case "$cur" in
+        ""|null) wm density "$OL_DENSITY" 2>/dev/null &&
+            echo "$(date) display density defaulted to $OL_DENSITY" >> /data/app_storage.log ;;
+    esac
+) &
 last=""
 while true; do
     sleep 10
