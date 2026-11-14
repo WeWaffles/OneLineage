@@ -66,7 +66,10 @@ if [ -f /data/local/tmp/ol_isolate ] && [ -x /data/ol_bridge ]; then
     mkdir -p $P
     rm -f /data/local/tmp/ol_bridge_ready
     if $BB mount -t binder binder $P; then
-        /data/ol_bridge /dev/binderfs/binder $P/binder /data/local/tmp/ol_bridge_ready > /data/ol_bridge.log 2>&1 &
+        # binderfs creates its devices root-only; system_server and apps
+        # (non-root uids) must be able to open them.
+        chmod 666 $P/binder $P/hwbinder $P/vndbinder 2>/dev/null
+        /data/ol_bridge /dev/binderfs/binder $P/binder /data/local/tmp/ol_bridge_ready /data/ol_lazy_services.txt -v > /data/ol_bridge.log 2>&1 &
         BRIDGE_PID=$!
         sleep 0.5
         for d in binder hwbinder vndbinder; do $BB mount --bind $P/$d /dev/binderfs/$d; done

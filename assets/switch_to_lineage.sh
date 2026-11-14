@@ -372,6 +372,12 @@ chmod 755 "$STAGE/data/zygote_exec"
 if [ -f "$STAGE/ol_bridge" ]; then
     cp -f "$STAGE/ol_bridge" "$STAGE/data/ol_bridge"
     chmod 755 "$STAGE/data/ol_bridge"
+    # On-demand host services (init "interface aidl" lines): the bridge gives
+    # Lineage placeholders that start them on first use (e.g. apexservice).
+    cat /system/etc/init/*.rc /system_ext/etc/init/*.rc /product/etc/init/*.rc \
+        /vendor/etc/init/*.rc /odm/etc/init/*.rc 2>/dev/null \
+        | sed -n 's/^[[:space:]]*interface aidl \([^[:space:]]*\).*/\1/p' | sort -u \
+        > "$STAGE/data/ol_lazy_services.txt"
 fi
 
 # Launch takeover inside isolated mount namespace
@@ -387,8 +393,18 @@ nohup $BB sh -c "
 # session_failsafe
 while kill -0 $TAKEOVER_PID 2>/dev/null; do sleep 3; done
 [ -f /data/local/tmp/lineage_lockstate/session_active ] || exit 0
-echo \"\$(date '+%F %T') guest exited; running return_to_oneui.sh\" >> /data/local/tmp/lineage_lockstate/guard.log
-sh \"$STAGE/return_to_oneui.sh\" >> /data/local/tmp/lineage_lockstate/failsafe_return.log 2>&1
+# Restarting One UI in place does not work on every device and crash-loops
+# its system_server into Safe Mode. Only restore and verify the lock state,
+# then do a clean reboot (the normal way back to One UI).
+echo \"\$(date '+%F %T') guest exited; restoring lock state, then rebooting\" >> /data/local/tmp/lineage_lockstate/guard.log
+pkill -9 -f ol_bridge 2>/dev/null
+if sh \"$STAGE/lock_guard.sh\" restore >> /data/local/tmp/lineage_lockstate/failsafe_return.log 2>&1; then
+    sh \"$STAGE/lock_guard.sh\" close
+    sync
+    reboot
+else
+    echo \"\$(date '+%F %T') !!! restore NOT verified; not rebooting\" >> /data/local/tmp/lineage_lockstate/guard.log
+fi
 " </dev/null >/dev/null 2>&1 &
 
 # Start UI Activator daemon
