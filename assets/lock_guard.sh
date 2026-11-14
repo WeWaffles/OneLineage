@@ -275,39 +275,31 @@ do_reserve() {
     return 0
 }
 
-# Boot-time safety net (Magisk / KernelSU / APatch run post-fs-data.d before
-# zygote). If the phone reboots in the middle of a session - crash, battery,
-# forced reboot - One UI's credential files are put back before One UI reads
-# them. It does nothing unless a session is still marked active, and removes
-# itself after a clean return.
+# There is deliberately NO boot-time restore hook. Root loads after boot on
+# temp-rooted phones, so a hook could not run before One UI anyway, and with a
+# stale session marker it would roll back changes One UI made legitimately
+# since (e.g. a new PIN), which is itself a lock-screen bootloop.
 HOOK_NAME="onelineage_lock_restore.sh"
-install_hook() {
-    self="$(readlink -f "$0" 2>/dev/null || echo "$0")"
-    for d in /data/adb/post-fs-data.d; do
-        [ -d /data/adb ] || continue
-        mkdir -p "$d" 2>/dev/null || continue
-        cat > "$d/$HOOK_NAME" <<EOF
-#!/system/bin/sh
-# OneLineage: restore One UI lock state after an interrupted Lineage session.
-[ -f "$ACTIVE" ] || exit 0
-[ -f "$self" ] || exit 0
-sh "$self" restore
-EOF
-        chmod 755 "$d/$HOOK_NAME" && log "Installed boot-time restore hook $d/$HOOK_NAME"
-    done
-}
 remove_hook() {
     rm -f "/data/adb/post-fs-data.d/$HOOK_NAME" 2>/dev/null
 }
 
+# Close the session once One UI's credential state is verified identical to the
+# snapshot. After this, a reboot is safe and the boot hook is removed.
+do_close() {
+    rm -f "$ACTIVE"
+    remove_hook
+    log "Session closed; One UI credential state verified. Safe to reboot."
+}
+
 case "$1" in
+    close)   do_close ;;
     reserve) do_reserve "$2" ;;
-    hook)    install_hook ;;
     unhook)  remove_hook ;;
     backup)  do_backup ;;
     block)   do_block ;;
     unblock) do_unblock ;;
     restore) do_restore ;;
     verify)  do_verify ;;
-    *) echo "usage: $0 reserve <file>|hook|unhook|backup|block|unblock|restore|verify"; exit 2 ;;
+    *) echo "usage: $0 close|reserve <file>|unhook|backup|block|unblock|restore|verify"; exit 2 ;;
 esac

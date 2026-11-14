@@ -257,7 +257,7 @@ if ! sh "$STAGE/lock_guard.sh" backup; then
     exit 1
 fi
 sh "$STAGE/lock_guard.sh" block
-sh "$STAGE/lock_guard.sh" hook
+sh "$STAGE/lock_guard.sh" unhook
 
 # Fence off One UI's Weaver slots from the guest (see lock_guard.sh reserve).
 # The guest's /metadata is the GSI's empty dir, so a private slot_map is bound

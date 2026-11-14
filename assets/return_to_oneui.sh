@@ -89,9 +89,17 @@ setprop ctl.start vendor.biometrics.fingerprint.inscreen 2>/dev/null || true
 # switch (lock_guard.sh), and bring the host security HALs back, BEFORE One
 # UI's system_server starts and reads them.
 GUARD="/data/local/tmp/lineage_stage/lock_guard.sh"
+SAFE_TO_REBOOT=0
 if [ -f "$GUARD" ]; then
     sh "$GUARD" unblock
-    sh "$GUARD" restore || echo "!!! WARNING: credential restore failed - do NOT reboot, check /data/local/tmp/lineage_lockstate/guard.log"
+    if sh "$GUARD" restore; then
+        # Restore verified byte-for-byte against the snapshot: a reboot can no
+        # longer pick up anything the guest changed.
+        sh "$GUARD" close
+        SAFE_TO_REBOOT=1
+    else
+        echo "!!! WARNING: credential restore failed - do NOT reboot, check /data/local/tmp/lineage_lockstate/guard.log"
+    fi
 else
     echo "!!! WARNING: lock_guard.sh missing; One UI credential state was not checked"
 fi
@@ -112,14 +120,12 @@ am start -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/nu
 # switch_to_lineage.sh drops SELinux to permissive for the takeover; restore it.
 setenforce 1 2>/dev/null || true
 echo "SELinux mode: $(getenforce 2>/dev/null || echo unknown)"
-if [ -f "$GUARD" ]; then
-    echo "Checking that One UI stays up (60 s)..."
-    if sh "$GUARD" verify; then
-        echo "One UI restored successfully."
-    else
-        echo "!!! One UI is not stable yet. Do NOT reboot (temp root would be lost). See /data/local/tmp/lineage_lockstate/guard.log"
-        exit 1
-    fi
+# Restarting One UI's userspace in place is not reliable on every device, so
+# the return finishes with a manual reboot. Only say so once the credential
+# state has been verified; otherwise a reboot would load the guest's changes.
+if [ "$SAFE_TO_REBOOT" = "1" ]; then
+    echo "One UI lock-screen state verified. Reboot the phone now to finish returning to One UI."
 else
-    echo "One UI restored successfully."
+    echo "!!! Lock-screen state NOT verified. Do NOT reboot (temp root would be lost). See /data/local/tmp/lineage_lockstate/guard.log"
+    exit 1
 fi
