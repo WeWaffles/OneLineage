@@ -50,6 +50,31 @@ only forwards hardware services on the allowlist. Security services are never on
    batterystats reset) once phases 1–5 make them unnecessary. Keep the
    checksum checks as a regression test.
 
+## Findings (S26 Ultra, SM-S948U, One UI 8.5)
+
+- **Phase 1 probe passed.** A second binderfs instance mounts; guest
+  servicemanager, hwservicemanager and vndservicemanager run on it and the
+  private registry starts empty. Log: `logs/isolation/probe.log`.
+- **The Lineage GSI has no software KeyMint or gatekeeper HAL.** It ships the
+  framework daemons (`keystore2`, `gatekeeperd`, `credstore`) and the
+  `libkeymint_fake_latest.so` library, but no HAL service binary. So phase 2
+  cannot run on its own, and the order changes:
+  - **KeyMint, secure clock, shared secret:** forward the host's TEE HALs
+    through the bridge. They hold no per-device state that guest calls change.
+    Key blobs live in the guest's own keystore2 database in the guest's
+    `/data`, so One UI's `/data/misc/keystore` is never written.
+  - **Gatekeeper:** forward the host HAL, with the guest's own `gatekeeperd`
+    keeping its handles in the guest's `/data/misc/gatekeeper`.
+  - **Weaver:** never forwarded. The guest gets a tiny stub `IWeaver` on its
+    private registry that fails `getConfig()`, so LockSettings treats Weaver
+    as unavailable instead of waiting for it (the 66 s watchdog deadlock).
+    Buildable with the NDK (`libbinder_ndk`).
+  - **vold:** the guest already runs its own `vold`; on the private registry
+    it stops replacing One UI's `vold` registration.
+- Revised order: **phase 3 (bridge) first**, then phase 2 is just "start the
+  guest's keystore2/gatekeeperd/vold plus the Weaver stub on the private
+  registry".
+
 ## Risks
 
 - Phase 3 is the core of the work: the bridge has to translate binder objects
