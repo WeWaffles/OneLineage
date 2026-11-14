@@ -105,6 +105,41 @@ if [ -f "$STAGE/libaudioclient_aidl_conversion_patched.so" ]; then
     $BB mount --bind "$STAGE/libaudioclient_aidl_conversion_patched.so" "$ROOTFS/system/lib64/libaudioclient_aidl_conversion.so"
     echo "Bound libaudioclient_aidl_conversion_patched.so"
 fi
+# Codec-list spin fix. The guest's MediaCodecList::getInstance() asks the shared
+# "media.player" service for IMediaCodecList. On firmware where Samsung's
+# mediaserver serves that itself (no separate media.codec, e.g. S26 Ultra
+# AZCF), its reply does not match the GSI's AIDL, the list length is garbage and
+# system_server/SystemUI/mediaserver spin at 400%+ CPU (overheating). Renaming
+# the one "media.player" lookup in libstagefright (same length) makes the lookup
+# fail, and getInstance() falls back to getLocalInstance(), building the list
+# in-process from the Codec2 HAL. MediaPlayer itself uses libmedia's lookup and
+# is untouched.
+SF_SRC="$ROOTFS/system/lib64/libstagefright.so"
+SF_PATCH="$STAGE/libstagefright_patched.so"
+if [ ! -f "$SF_PATCH" ] && [ -f "$SF_SRC" ]; then
+    SF_HITS=$(grep -c -a "media\.player" "$SF_SRC" 2>/dev/null)
+    SF_OFF=$(grep -abo "media\.player" "$SF_SRC" 2>/dev/null | head -n 1 | cut -d: -f1)
+    if [ "$SF_HITS" = "1" ] && [ -n "$SF_OFF" ]; then
+        cp -f "$SF_SRC" "$SF_PATCH.tmp"
+        printf 'nolist' | dd of="$SF_PATCH.tmp" bs=1 seek=$((SF_OFF + 6)) conv=notrunc 2>/dev/null
+        if grep -q -a "media\.nolist" "$SF_PATCH.tmp" && ! grep -q -a "media\.player" "$SF_PATCH.tmp"; then
+            mv -f "$SF_PATCH.tmp" "$SF_PATCH"
+            echo "Created libstagefright_patched.so (codec-list lookup at offset $SF_OFF)"
+        else
+            rm -f "$SF_PATCH.tmp"
+            echo "!!! WARNING: libstagefright patch verification failed, skipping"
+        fi
+    else
+        echo "!!! WARNING: expected 1 media.player in libstagefright.so, found ${SF_HITS:-0}; skipping patch"
+    fi
+fi
+if [ -f "$SF_PATCH" ]; then
+    chmod 644 "$SF_PATCH"
+    chcon u:object_r:system_lib_file:s0 "$SF_PATCH" 2>/dev/null || true
+    $BB umount -l "$SF_SRC" 2>/dev/null || true
+    $BB mount --bind "$SF_PATCH" "$SF_SRC"
+    echo "Bound libstagefright_patched.so"
+fi
 if [ -f "$STAGE/framework-res_patched.apk" ]; then
     $BB umount -l "$ROOTFS/system/framework/framework-res.apk" 2>/dev/null || true
     $BB mount --bind "$STAGE/framework-res_patched.apk" "$ROOTFS/system/framework/framework-res.apk"

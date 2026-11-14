@@ -663,7 +663,7 @@ public class MainActivity extends Activity {
     private void extractAssets() {
         executor.execute(() -> {
             String[] assets = {
-                "switch_to_lineage.sh", "return_to_oneui.sh",
+                "switch_to_lineage.sh", "return_to_oneui.sh", "lock_guard.sh",
                 "master_prepare.sh", "master_inner.sh",
                 "zygote_exec", "clean_apex_info_list.xml",
                 "services_patched.jar", "framework_patched.jar",

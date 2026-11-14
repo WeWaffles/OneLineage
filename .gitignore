@@ -3,3 +3,4 @@ out/
 keystore/
 backups_*/
 *.idsig
+logs/

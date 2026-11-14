@@ -32,6 +32,15 @@ echo "=== LINEAGEOS 23.2 TAKEOVER STARTING ==="
 # return_to_oneui.sh restores enforcing.
 setenforce 0 2>/dev/null || true
 echo "SELinux mode: $(getenforce 2>/dev/null || echo unknown)"
+# Everything below needs full root (permissive SELinux, ctl.* properties,
+# mounts). A restricted su (e.g. a KernelSU app profile without full
+# capabilities) gets part-way - including bind mounts over the live One UI -
+# before failing, so refuse to start at all in that case.
+if [ "$(getenforce 2>/dev/null)" != "Permissive" ]; then
+    echo "ERROR: could not switch SELinux to permissive. su does not have full root."
+    echo "In KernelSU, give the app (and Shell, if using adb) the default full-root profile."
+    exit 1
+fi
 
 # --- IMS / SMS REGISTRATION GATE -----------------------------------------
 # The guest has no ImsService of its own, so the modem's IMS registration is
@@ -161,6 +170,7 @@ set_prop sys.rescue_boot_count 0
 # counter accumulates and fires RescueParty mid-session.
 if ! ps -ef 2>/dev/null | grep -v grep | grep -q "rescue_boot_suppress"; then
     nohup $BB sh -c "
+# rescue_boot_suppress
 while true; do
     setprop sys.rescue_boot_count 0 2>/dev/null
     sleep 15
@@ -220,7 +230,48 @@ fi
 echo "=== [6/6] Launching LineageOS Takeover Daemon ==="
 pkill -f "while true; do [ \"\$(getprop init.svc.zygote)\"" 2>/dev/null || true
 pkill -f "while true; do for p in \\\$(pidof audioserver cameraserver)" 2>/dev/null || true
+# Record whether One UI is up and fully booted before we stop it: lock_guard
+# uses this to decide whether the current state is a known-good snapshot.
+ONEUI_HEALTHY=0
+if [ "$(getprop sys.boot_completed)" = "1" ] && pidof system_server >/dev/null 2>&1; then
+    ONEUI_HEALTHY=1
+fi
+export ONEUI_HEALTHY
 setprop ctl.stop zygote
+
+# Protect One UI's lock-screen / key state before the guest can touch it (see
+# lock_guard.sh). Snapshot it now that One UI's system_server is down, and
+# refuse to continue without a good snapshot.
+sleep 2
+if ! sh "$STAGE/lock_guard.sh" backup; then
+    echo "ERROR: could not back up One UI credential state; aborting the switch."
+    setprop ctl.start zygote
+    setenforce 1 2>/dev/null || true
+    exit 1
+fi
+sh "$STAGE/lock_guard.sh" block
+sh "$STAGE/lock_guard.sh" hook
+
+# Fence off One UI's Weaver slots from the guest (see lock_guard.sh reserve).
+# The guest's /metadata is the GSI's empty dir, so a private slot_map is bound
+# over it; the host's real /metadata is never touched. No fence, no switch.
+GUEST_META="$STAGE/guest_metadata"
+mkdir -p "$GUEST_META/password_slots"
+chown 1000:1000 "$GUEST_META/password_slots" 2>/dev/null
+chmod 700 "$GUEST_META/password_slots"
+if ! sh "$STAGE/lock_guard.sh" reserve "$GUEST_META/password_slots/slot_map" \
+   || ! { $BB umount -l "$STAGE/rootfs/metadata" 2>/dev/null; mkdir -p "$STAGE/rootfs/metadata" 2>/dev/null; $BB mount --bind "$GUEST_META" "$STAGE/rootfs/metadata"; } \
+   || [ ! -s "$STAGE/rootfs/metadata/password_slots/slot_map" ]; then
+    echo "ERROR: could not protect One UI's Weaver slots; aborting the switch."
+    sh "$STAGE/lock_guard.sh" unhook
+    rm -f /data/local/tmp/lineage_lockstate/session_active
+    setprop ctl.start zygote
+    setenforce 1 2>/dev/null || true
+    exit 1
+fi
+echo "Weaver slots fenced for the guest."
+echo "NOTE: do not set a screen lock / PIN inside LineageOS: it shares this phone's lock-screen hardware (Weaver) with One UI."
+
 setprop ctl.stop surfaceflinger
 # audioserver/cameraserver are deliberately left running. The guest shares this
 # binder namespace, and its AudioService.<init> -> AudioDeviceBroker.init ->
@@ -270,6 +321,7 @@ kill -9 $(pidof media.codec) $(pidof media.metrics) 2>/dev/null || true
 # daemon that immediately kills any media.codec that init brings back.
 if ! ps -ef 2>/dev/null | grep -v grep | grep -q "media_codec_suppress"; then
     nohup $BB sh -c "
+# media_codec_suppress
 while true; do
     sleep 3
     if pidof media.codec >/dev/null 2>&1; then
@@ -284,6 +336,12 @@ done
 " </dev/null >/dev/null 2>&1 &
     echo "media.codec suppressor started"
 fi
+
+# The IMediaCodecList AIDL mismatch makes system_server/SystemUI/mediaserver log
+# AString/Parcel warnings millions of times, which pins logd at ~100% CPU.
+for t in AString libbinder.Parcel MediaCodecList AidlConversionCppNdk; do
+    setprop log.tag.$t S 2>/dev/null || true
+done
 
 # Same handover for wifi. The guest's WifiService binds IWificond (service
 # "wifinl80211") and drives the vendor HAL through it. Samsung's wificond is
@@ -309,6 +367,18 @@ chmod 755 "$STAGE/data/zygote_exec"
 $BB unshare -m $BB sh "$STAGE/data/master_inner.sh" </dev/null >"$STAGE/data/takeover.log" 2>&1 &
 TAKEOVER_PID=$!
 echo "Takeover daemon PID: $TAKEOVER_PID"
+
+# Session failsafe. If the guest dies on its own (zygote/system_server crash),
+# nothing used to bring One UI back properly: the host zygote stayed
+# suppressed, or came back WITHOUT lock_guard restoring the credential state.
+# Run the full, guarded return path instead.
+nohup $BB sh -c "
+# session_failsafe
+while kill -0 $TAKEOVER_PID 2>/dev/null; do sleep 3; done
+[ -f /data/local/tmp/lineage_lockstate/session_active ] || exit 0
+echo \"\$(date '+%F %T') guest exited; running return_to_oneui.sh\" >> /data/local/tmp/lineage_lockstate/guard.log
+sh \"$STAGE/return_to_oneui.sh\" >> /data/local/tmp/lineage_lockstate/failsafe_return.log 2>&1
+" </dev/null >/dev/null 2>&1 &
 
 # Start UI Activator daemon
 $BB sh -c "

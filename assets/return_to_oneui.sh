@@ -3,6 +3,10 @@
 BACKUP_DIR="/data/local/tmp/lineage_backups"
 
 echo "=== [1/5] Terminating Container Supervision & Zygote ==="
+# Only one return may run: stop the session failsafe so killing the guest below
+# does not trigger a second return (when the failsafe itself started us, this
+# only ends its waiting shell, not this script).
+pkill -f "session_failsafe" 2>/dev/null || true
 pkill -9 -f "ctl.stop zygote" 2>/dev/null || true
 pkill -9 -f "kill -STOP" 2>/dev/null || true
 pkill -9 -f "ui_activator" 2>/dev/null || true
@@ -81,6 +85,17 @@ sleep 1
 setprop ctl.start vendor.fingerprint-default-1_0 2>/dev/null || true
 setprop ctl.start vendor.biometrics.fingerprint.inscreen 2>/dev/null || true
 
+# Put One UI's lock-screen / key state back exactly as it was before the
+# switch (lock_guard.sh), and bring the host security HALs back, BEFORE One
+# UI's system_server starts and reads them.
+GUARD="/data/local/tmp/lineage_stage/lock_guard.sh"
+if [ -f "$GUARD" ]; then
+    sh "$GUARD" unblock
+    sh "$GUARD" restore || echo "!!! WARNING: credential restore failed - do NOT reboot, check /data/local/tmp/lineage_lockstate/guard.log"
+else
+    echo "!!! WARNING: lock_guard.sh missing; One UI credential state was not checked"
+fi
+
 setprop ctl.start surfaceflinger
 setprop ctl.start zygote
 setprop ctl.start audioserver
@@ -97,4 +112,14 @@ am start -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/nu
 # switch_to_lineage.sh drops SELinux to permissive for the takeover; restore it.
 setenforce 1 2>/dev/null || true
 echo "SELinux mode: $(getenforce 2>/dev/null || echo unknown)"
-echo "One UI restored successfully."
+if [ -f "$GUARD" ]; then
+    echo "Checking that One UI stays up (60 s)..."
+    if sh "$GUARD" verify; then
+        echo "One UI restored successfully."
+    else
+        echo "!!! One UI is not stable yet. Do NOT reboot (temp root would be lost). See /data/local/tmp/lineage_lockstate/guard.log"
+        exit 1
+    fi
+else
+    echo "One UI restored successfully."
+fi
