@@ -481,6 +481,36 @@ static void stub_reply(int ctx, node_t *nd, struct binder_transaction_data *tr) 
     pb_free(&p);
 }
 
+// One-way guest calls into host services that the bridge drops instead of
+// forwarding. A host service the guest makes exit stays dead for the guest:
+// the bridge cannot deliver a death notice for one node (binder only reports
+// a node dead when its owning process dies), so the guest keeps the stale
+// handle and never asks for a new one.
+//  - ISupplicant.terminate() (0xd, one-way, no arguments; read from Lineage's
+//    service-wifi ISupplicant$Stub$Proxy). Lineage sends it when Wi-Fi is
+//    turned off; with the host wpa_supplicant gone, Wi-Fi could not be turned
+//    on again (DeadObjectException in addStaInterface). Dropped, so the
+//    supplicant stays up and Lineage reuses it.
+static const struct { const char *iface; uint32_t code; } SWALLOW[] = {
+    {"android.hardware.wifi.supplicant.ISupplicant", 13},
+};
+
+static int swallow_guest_call(const struct binder_transaction_data *tr) {
+    if (!(tr->flags & TF_ONE_WAY)) return 0;
+    rd_t r = {(void *)(uintptr_t)tr->data.ptr.buffer, tr->data_size, 0, NULL, 0};
+    int32_t skip;
+    char desc[128];
+    // Interface token: strict-mode policy, work source, header, descriptor.
+    if (rd_i32(&r, &skip) || rd_i32(&r, &skip) || rd_i32(&r, &skip) || rd_str16(&r, desc, sizeof desc)) return 0;
+    for (size_t i = 0; i < sizeof SWALLOW / sizeof SWALLOW[0]; i++) {
+        if (tr->code == SWALLOW[i].code && !strcmp(desc, SWALLOW[i].iface)) {
+            LOG("dropped guest call %s/%u", desc, tr->code);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void handle_incoming(int ctx, struct binder_transaction_data *tr) {
     node_t *nd = (node_t *)(uintptr_t)tr->cookie;
     int oneway = tr->flags & TF_ONE_WAY;
@@ -569,6 +599,10 @@ static void handle_incoming(int ctx, struct binder_transaction_data *tr) {
             free_buffer(ctx, tr->data.ptr.buffer);
             return;
         }
+    }
+    if (ctx == GUEST && swallow_guest_call(tr)) {
+        free_buffer(ctx, tr->data.ptr.buffer);
+        return;
     }
     int dst = nd->ctx;
     pbuf_t out = {0};

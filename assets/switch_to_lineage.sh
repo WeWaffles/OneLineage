@@ -139,8 +139,19 @@ if ! ps -ef 2>/dev/null | grep -v grep | grep -q "ims_watchdog.sh"; then
     cat > /data/local/tmp/ims_watchdog.sh <<'IMSW'
 #!/system/bin/sh
 LOG=/data/local/tmp/ims_watchdog.log
+n=0
 while true; do
-    sleep 60
+    sleep 2
+    # Turning Wi-Fi off in Lineage terminates the host's wpa_supplicant, and
+    # the guest cannot start a host service again, so Wi-Fi would stay off
+    # ("ClientModeManager start failed"). Keep it running; an idle
+    # supplicant is harmless while Wi-Fi is off.
+    if [ "$(getprop init.svc.wpa_supplicant)" = "stopped" ]; then
+        setprop ctl.start wpa_supplicant 2>/dev/null
+        echo "$(date) restarted wpa_supplicant (Wi-Fi was turned off)" >> "$LOG"
+    fi
+    n=$((n + 1))
+    [ $((n % 30)) -eq 0 ] || continue
     if ! pidof imsd >/dev/null 2>&1; then
         setprop ctl.start imsd 2>/dev/null
         echo "$(date) restarted imsd (was missing)" >> "$LOG"
