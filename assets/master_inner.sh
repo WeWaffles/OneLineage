@@ -111,6 +111,54 @@ else
 fi
 echo "[Pivoted Root] App storage sweeper started..."
 
+# --- Isolation phase 1 probe (docs/ISOLATION.md) ---------------------------
+# Opt-in: touch /data/local/tmp/lineage_stage/data/local/tmp/ol_isolation_probe
+# on the host before switching. In a throwaway mount namespace, mount a NEW
+# binderfs instance, put its binder/hwbinder/vndbinder over /dev/binderfs, start
+# the guest's own service managers on it, record what registers, then tear it
+# all down. The guest's normal boot below is not changed, and nothing here can
+# reach One UI's registry (a fresh binderfs instance has its own context).
+if [ -f /data/local/tmp/ol_isolation_probe ]; then
+    echo "[Pivoted Root] Running isolation probe (log: /data/isolation_probe.log)..."
+    $BB unshare -m $BB sh -c '
+        BB="'"$BB"'"
+        P=/data/local/tmp/ol_binderfs
+        say() { echo "$(date +%T) $*"; }
+        $BB mount --make-rprivate /
+        mkdir -p $P
+        if ! $BB mount -t binder binder $P; then say "FAIL: kernel refused a second binderfs instance"; exit 1; fi
+        say "private binderfs: $(ls $P | tr "\n" " ")"
+        for d in binder hwbinder vndbinder; do
+            if [ -e $P/$d ] && [ -e /dev/binderfs/$d ]; then
+                $BB mount --bind $P/$d /dev/binderfs/$d && say "bound private $d"
+            else
+                say "missing $d (private: $([ -e $P/$d ] && echo yes || echo no))"
+            fi
+        done
+        /system/bin/servicemanager >/data/probe_sm.log 2>&1 & SM=$!
+        sleep 1
+        /system/bin/hwservicemanager >/data/probe_hwsm.log 2>&1 & HWSM=$!
+        VSM=""
+        if [ -x /vendor/bin/vndservicemanager ]; then
+            /vendor/bin/vndservicemanager /dev/vndbinder >/data/probe_vsm.log 2>&1 & VSM=$!
+        fi
+        sleep 2
+        for p in $SM $HWSM $VSM; do
+            kill -0 $p 2>/dev/null && say "manager $p running" || say "manager $p EXITED (see /data/probe_*sm.log)"
+        done
+        say "--- guest-private service list (should be tiny) ---"
+        /system/bin/service list 2>&1 | head -n 50
+        say "--- declared-but-missing HALs the bridge must forward ---"
+        /system/bin/lshal --types=b,c,l -i 2>/dev/null | head -n 80
+        kill $SM $HWSM $VSM 2>/dev/null
+        sleep 1
+        for d in binder hwbinder vndbinder; do $BB umount -l /dev/binderfs/$d 2>/dev/null; done
+        $BB umount -l $P 2>/dev/null
+        say "probe done; private registry torn down"
+    ' > /data/isolation_probe.log 2>&1
+    echo "[Pivoted Root] Isolation probe finished."
+fi
+
 echo "[Pivoted Root] Cleaning stale sockets..."
 rm -f /dev/socket/zygote /dev/socket/usap_pool_primary 2>/dev/null || true
 
