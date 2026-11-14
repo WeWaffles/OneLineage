@@ -167,6 +167,34 @@ IMSW
     echo "imsd keepalive started (log: /data/local/tmp/ims_watchdog.log)"
 fi
 
+# Touch recorder. The touchscreen sometimes stops responding in Lineage, and the
+# kernel log is gone after the restart that follows. Stream the touch driver's
+# kernel lines (power key, screen-off gestures, mode changes; normal touches
+# log nothing, so this is cheap) into /data/local/tmp/ol_touch.log, which
+# survives a reboot. The previous session's log is kept as .prev.
+if ! ps -ef 2>/dev/null | grep -v grep | grep -q "ol_touch_rec.sh"; then
+    cat > /data/local/tmp/ol_touch_rec.sh <<'TOUCHREC'
+#!/system/bin/sh
+LOG=/data/local/tmp/ol_touch.log
+[ -f "$LOG" ] && mv -f "$LOG" "$LOG.prev"
+echo "=== $(date) Lineage session start" > "$LOG"
+dmesg -w 2>/dev/null | grep --line-buffered -iE "sec_input|synaptics|sec tsp|input_dev|drm.*(panel|power)" | while read -r line; do
+    echo "$(date +%T) $line" >> "$LOG"
+    # Cap the size (keep the newest half).
+    if [ "$(stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt 2000000 ]; then
+        tail -c 1000000 "$LOG" > "$LOG.tmp" && mv -f "$LOG.tmp" "$LOG"
+    fi
+done
+TOUCHREC
+    chmod 755 /data/local/tmp/ol_touch_rec.sh
+    if command -v setsid >/dev/null 2>&1; then
+        setsid /system/bin/sh /data/local/tmp/ol_touch_rec.sh </dev/null >/dev/null 2>&1 &
+    else
+        nohup /system/bin/sh /data/local/tmp/ol_touch_rec.sh </dev/null >/dev/null 2>&1 &
+    fi
+    echo "touch recorder started (log: /data/local/tmp/ol_touch.log)"
+fi
+
 # Set permissive privapp permissions to avoid Signature|privileged fatal exceptions
 set_prop ro.control_privapp_permissions log
 
