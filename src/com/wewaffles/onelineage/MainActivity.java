@@ -660,6 +660,23 @@ public class MainActivity extends Activity {
         });
     }
 
+    /** Size of a bundled asset, or -1 if it cannot be read. */
+    private long assetLength(String asset) {
+        try (android.content.res.AssetFileDescriptor fd = getAssets().openFd(asset)) {
+            return fd.getLength();  // stored (uncompressed) assets, e.g. .jar
+        } catch (Exception ignored) {
+        }
+        try (InputStream in = getAssets().open(asset)) {
+            long n = 0;
+            byte[] buffer = new byte[32768];
+            int read;
+            while ((read = in.read(buffer)) != -1) n += read;
+            return n;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
     private void extractAssets() {
         executor.execute(() -> {
             String[] assets = {
@@ -667,13 +684,16 @@ public class MainActivity extends Activity {
                 "master_prepare.sh", "master_inner.sh",
                 "zygote_exec", "ol_bridge", "clean_apex_info_list.xml",
                 "services_patched.jar", "framework_patched.jar",
-                "7zz", "PermissionController_patched.apk"
+                "7zz", "PermissionController_patched.apk",
+                "OneLineageKnoxStub.apk", "ol_audioparam.dex",
+                "OneLineageDisplayOverlay.apk"
             };
             File filesDir = getFilesDir();
             for (String asset : assets) {
                 File target = new File(filesDir, asset);
-                if (target.exists() && target.length() > 0 && asset.endsWith(".jar")) {
-                    continue; // Skip re-extracting large jars if already present
+                if (target.exists() && target.length() > 0 && asset.endsWith(".jar")
+                        && target.length() == assetLength(asset)) {
+                    continue; // Skip re-extracting large jars that are unchanged
                 }
                 try (InputStream in = getAssets().open(asset);
                      OutputStream out = new FileOutputStream(target)) {

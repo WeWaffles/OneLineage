@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Static framework overlay with this phone's real screen shape, for the
+  Lineage guest. The GSI's framework-res says the screen has no camera hole
+  and square corners (Samsung keeps the real values in One UI's own product
+  overlay, which the guest never reads), so SystemUI laid the status bar out
+  for a plain rectangle: the clock hugged the rounded top-left corner while
+  the right side kept the privacy-dot padding, and the row looked shifted.
+  Values come from One UI's framework-res__*_auto_generated_rro_product.apk
+  on the SM-S948U. master_prepare.sh copies it into the guest's
+  /product/overlay.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.onelineage.overlay.display">
+    <overlay android:targetPackage="android" android:isStatic="true" android:priority="900" />
+    <application android:hasCode="false" />
+</manifest>

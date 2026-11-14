@@ -88,6 +88,45 @@ mount | grep -q "$ROOTFS/vendor_dlkm " || $BB mount --bind /vendor_dlkm "$ROOTFS
 # classes. Approach from OneOS (docs/SAMSUNG_IMS.md). Opt out with
 # $STAGE/data/local/tmp/ol_no_secims. Must run before the binds below that
 # land inside system_ext.
+# Helper the guest uses to tell the audio HAL which SIM a call is on (see the
+# call-audio step after boot and tools/audioparam).
+if [ -f "$STAGE/ol_audioparam.dex" ]; then
+    cp -f "$STAGE/ol_audioparam.dex" "$STAGE/data/local/tmp/ol_audioparam.dex"
+    chmod 644 "$STAGE/data/local/tmp/ol_audioparam.dex"
+fi
+
+# This phone's real screen shape (camera hole, rounded corners) for the
+# guest's framework, so SystemUI lays the status bar out around them (see
+# tools/display_overlay). Overlays are scanned at boot, so it must be in place
+# before the guest starts. The GSI image is read-only, so this is the same
+# trick as the IMS staging below: a tiny tmpfs layer over product/overlay
+# holding an empty placeholder, with the real APK bound onto it.
+DISP_APK="$STAGE/OneLineageDisplayOverlay.apk"
+DISP_DIR="$ROOTFS/system/product/overlay"
+if [ ! -f "$DISP_APK" ] || [ ! -d "$DISP_DIR" ]; then
+    echo "Display overlay: off (no APK)"
+elif mount | grep -q " $DISP_DIR type overlay"; then
+    echo "Display overlay: already mounted"
+else
+    chmod 644 "$DISP_APK"
+    chcon u:object_r:system_file:s0 "$DISP_APK" 2>/dev/null || true
+    DLAYER="$STAGE/display_layer"
+    mkdir -p "$DLAYER"
+    $BB umount -l "$DLAYER" 2>/dev/null || true
+    $BB mount -t tmpfs -o size=1m,mode=755 tmpfs "$DLAYER"
+    mkdir -p "$DLAYER/OneLineageDisplay"
+    touch "$DLAYER/OneLineageDisplay/OneLineageDisplayOverlay.apk"
+    chmod -R a+rX "$DLAYER"
+    chcon -R u:object_r:system_file:s0 "$DLAYER" 2>/dev/null || true
+    if $BB mount -t overlay overlay -o "lowerdir=$DLAYER:$DISP_DIR" "$DISP_DIR" &&
+       $BB mount --bind "$DISP_APK" "$DISP_DIR/OneLineageDisplay/OneLineageDisplayOverlay.apk"; then
+        echo "Display overlay: staged"
+    else
+        echo "Display overlay: off (mount failed)"
+        $BB umount -l "$DISP_DIR" 2>/dev/null || true
+    fi
+fi
+
 SECIMS="$STAGE/secims"
 SECIMS_APP="$SECIMS/priv-app/OneLineageSecIms"
 rm -f "$STAGE/data/local/tmp/ol_secims_staged"
@@ -640,6 +679,25 @@ if [ -z "$iface" ]; then
     done
 fi
 [ -z "$iface" ] && exit 0
+# Once the guest's own networks work (switch_to_lineage.sh clears One UI's
+# netd networks and DNS caches first), netd fills each interface's table and
+# this workaround must stand down: its catch-all rule sits above Android's
+# per-network rules, so it sent traffic meant for another network (the IMS
+# network's SIP over TCP) out of the default interface. Calls then hung on
+# "Calling" because no SIP response came back. netd's table for an interface
+# is its ifindex + 1000; the table name does not resolve here (this runs in
+# the guest's mount namespace, with the guest's rt_tables). The IPv6 RA route
+# lands in that table on its own, so only a netd ("proto static") v6 default
+# counts.
+nt=$(( $(cat /sys/class/net/"$iface"/ifindex 2>/dev/null || echo -1000) + 1000 ))
+if [ "$nt" -gt 0 ] && { ip route show table "$nt" 2>/dev/null | grep -q '^default ' \
+   || ip -6 route show table "$nt" 2>/dev/null | grep -q '^default .*proto static'; }; then
+    removed=""
+    ip rule show 2>/dev/null | grep -q '^14999:' && ip rule del priority 14999 2>/dev/null && removed="v4"
+    ip -6 rule show 2>/dev/null | grep -q '^14999:' && ip -6 rule del priority 14999 2>/dev/null && removed="$removed v6"
+    [ -n "$removed" ] && echo "net routes handled by Lineage ($iface); removed catch-all ($removed)"
+    exit 0
+fi
 subnet=$(ip route show table all 2>/dev/null | awk -v d="$iface" \
     '$2=="dev" && $3==d && $0 ~ /scope link/ && $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\// {print $1; exit}')
 [ -z "$subnet" ] && exit 0
@@ -721,6 +779,19 @@ OL_DENSITY=540
         echo "$(date) IMS: com.sec.imsservice set as MMTEL service (slot 1: $(cmd phone ims get-ims-service -s 1 -d -f 1))" >> /data/app_storage.log
     elif [ -f /data/local/tmp/ol_secims_staged ]; then
         echo "$(date) IMS: staged but com.sec.imsservice is not installed (signature carve-out missing?)" >> /data/app_storage.log
+    fi
+    # Call audio: Samsung's audio HAL plays a call through the voice channel
+    # (VSID) of the SIM slot it was last told about. One UI's Telecom sends
+    # g_call_sim_slot before every call; Lineage's never does, so with the SIM
+    # in slot 2 calls ran on slot 1's channel and were silent both ways. The
+    # HAL keeps the slot between calls, so set it once here, to the first
+    # slot with a SIM (gsm.sim.state is e.g. "ABSENT,LOADED" -> 0x02).
+    if [ -f /data/local/tmp/ol_audioparam.dex ]; then
+        slot=$(getprop gsm.sim.state | awk -F, '{ for (i = 1; i <= NF; i++) if ($i == "LOADED" || $i == "READY") { print i; exit } }')
+        if [ -n "$slot" ]; then
+            res=$(CLASSPATH=/data/local/tmp/ol_audioparam.dex app_process /system/bin com.onelineage.audioparam.Main "g_call_sim_slot=0x0$slot" 2>&1)
+            echo "$(date) call audio: $res" >> /data/app_storage.log
+        fi
     fi
 ) &
 last=""
