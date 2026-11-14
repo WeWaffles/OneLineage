@@ -244,6 +244,26 @@ if [ "$(getprop sys.boot_completed)" = "1" ] && pidof system_server >/dev/null 2
     ONEUI_HEALTHY=1
 fi
 export ONEUI_HEALTHY
+# Clear One UI's networks from the host netd, and their DNS resolver caches,
+# while One UI's system_server is still up. The guest's ConnectivityService
+# programs this same netd and numbers its networks from 100 like One UI did.
+# A stale resolver cache makes its createNetworkCache fail with "File exists",
+# the network is then treated as failed and never becomes the validated
+# default (no Wi-Fi, apps report no network; IMS never connects). This must
+# run before system_server stops: after that netd stops answering (it waits
+# on a framework service) until the guest's system_server is up. Every call
+# is time-limited anyway. netd's built-in networks (99 and below) stay.
+ids=$(timeout 12 dumpsys netd 2>/dev/null | awk '$2 == "PHYSICAL" || $2 == "VIRTUAL" { if ($1 ~ /^[0-9]+$/) print $1 }')
+cleared=""
+for id in $ids; do
+    [ "$id" -ge 100 ] 2>/dev/null && timeout 3 ndc network destroy "$id" >/dev/null 2>&1 && cleared="$cleared $id"
+done
+# IDnsResolver transaction 9 = destroyNetworkCache(netId); a no-op for a
+# netId with no cache.
+for id in $ids $(seq 100 119); do
+    [ "$id" -ge 100 ] 2>/dev/null && timeout 3 service call dnsresolver 9 i32 "$id" >/dev/null 2>&1
+done
+echo "netd: cleared One UI networks:${cleared:- none} (and DNS caches)"
 setprop ctl.stop zygote
 
 # Protect One UI's lock-screen / key state before the guest can touch it (see
@@ -294,24 +314,6 @@ kill -9 $(pidof zygote_exec) 2>/dev/null || true
 kill -9 $(pidof zygote64) 2>/dev/null || true
 kill -9 $(pidof system_server) 2>/dev/null || true
 sleep 1
-
-# Clear One UI's networks from the host netd. The guest's ConnectivityService
-# programs this same netd and numbers its networks from 100 like One UI did,
-# so a stale One UI network made it fail with "Error creating network [101
-# CELLULAR]: File exists". That network then never connects, and nothing that
-# asks for it (Samsung IMS's IMS PDN request) is ever told it is available.
-# netd's built-in networks (99 local, 52 unreachable and below) stay.
-# Right after the kills netd can be busy: `dumpsys netd` may come back empty
-# and ndc may block, so every call is time-limited (a hang here leaves the
-# phone on the boot logo with no guest). With no list, sweep the range One UI
-# uses; destroying a netId that does not exist is a harmless error.
-ids=$(timeout 12 dumpsys netd 2>/dev/null | awk '$2 == "PHYSICAL" || $2 == "VIRTUAL" { if ($1 ~ /^[0-9]+$/) print $1 }')
-[ -n "$ids" ] || ids=$(seq 100 119)
-cleared=""
-for id in $ids; do
-    [ "$id" -ge 100 ] 2>/dev/null && timeout 3 ndc network destroy "$id" >/dev/null 2>&1 && cleared="$cleared $id"
-done
-echo "netd: cleared One UI networks:${cleared:- none}"
 
 # Stop the HOST media codec stack. The guest's libmedia binds `media.codec` from
 # the shared servicemanager, i.e. Samsung's mediaserver - whose IMediaCodecList
