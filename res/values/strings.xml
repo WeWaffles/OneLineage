@@ -105,6 +105,7 @@
     <string name="log_extracting_archive">Extracting %1$s via native 7zz…</string>
     <string name="log_extract_failed">7zz extraction failed (exit %1$d) - system.raw was not produced</string>
     <string name="log_extract_complete">✓ Extraction complete → system.raw ready!</string>
+    <string name="log_local_image_found">Found local image %1$s, using it instead of downloading</string>
     <string name="log_setup_failed">Download / setup failed: %1$s</string>
     <string name="dialog_delete_title">Delete LineageOS Files?</string>
     <string name="dialog_delete_message">This will cleanly unmount the container, detach loop devices, and remove system.raw to free up ~3.5GB. You can reinstall anytime.</string>

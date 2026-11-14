@@ -105,6 +105,7 @@
     <string name="log_extracting_archive">Extraindo %1$s com o 7zz…</string>
     <string name="log_extract_failed">Falha ao extrair com o 7zz (código %1$d): system.raw não foi criado</string>
     <string name="log_extract_complete">✓ Extração concluída → system.raw pronto!</string>
+    <string name="log_local_image_found">Imagem local %1$s encontrada, usando-a em vez de baixar</string>
     <string name="log_setup_failed">Falha no download ou na configuração: %1$s</string>
     <string name="dialog_delete_title">Excluir arquivos do LineageOS?</string>
     <string name="dialog_delete_message">Isso desmontará o contêiner, desconectará os dispositivos loop e removerá system.raw para liberar cerca de 3,5 GB. Você poderá instalar novamente.</string>

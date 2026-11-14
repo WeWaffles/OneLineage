@@ -101,6 +101,7 @@ public class MainActivity extends Activity {
     private static final String STAGE_DIR = "/data/local/tmp/lineage_stage";
     private static final String SYSTEM_RAW = STAGE_DIR + "/system.raw";
 
+    private static final String LOCAL_IMAGE = "/sdcard/Download/OnePixel/system.img";
     private static final String URL_VANILLA = "https://downloads.sourceforge.net/project/misterztr-gsi/LineageOS/Android%2016/LineageOS-23.2-20260524-VANILLA-EXT4-GSI.7z?use_mirror=autoselect";
     private static final String URL_GAPPS = "https://downloads.sourceforge.net/project/misterztr-gsi/LineageOS/Android%2016/LineageOS-23.2-20260524-GAPPS-EXT4-GSI.7z?use_mirror=autoselect";
     private static final long ESTIMATED_VANILLA_BYTES = 922022276L;
@@ -868,6 +869,27 @@ public class MainActivity extends Activity {
                 appendLog(getString(R.string.log_wiping_userdata));
                 runRootCmdDrained(wipeUserDataCmd());
 
+                // OnePixel: a locally built PixelOS image (system + system_ext + product merged,
+                // see README) takes priority over the network download. It is moved, not copied,
+                // since both paths are on /data and the image is ~4.7 GB.
+                boolean usedLocalImage = false;
+                if (runRootCmdDrained("[ -s " + LOCAL_IMAGE + " ]") == 0) {
+                    appendLog(getString(R.string.log_local_image_found, LOCAL_IMAGE));
+                    setLogStatus(getString(R.string.status_extracting));
+                    mainHandler.post(() -> {
+                        pbDownload.setIndeterminate(true);
+                        tvDownloadProgress.setText(R.string.progress_extracting);
+                        btnDownloadLineage.setText(R.string.btn_installing);
+                    });
+                    int mvRet = runRootCmdDrained("rm -f " + STAGE_DIR + "/*.img " + SYSTEM_RAW + "; " +
+                            "mv -f " + LOCAL_IMAGE + " " + SYSTEM_RAW + " && chmod 644 " + SYSTEM_RAW);
+                    if (mvRet != 0 || runRootCmdDrained("[ -s " + SYSTEM_RAW + " ]") != 0) {
+                        throw new Exception(getString(R.string.log_extract_failed, mvRet));
+                    }
+                    usedLocalImage = true;
+                }
+
+                if (!usedLocalImage) {
                 String downloadUrl = (flavor == Flavor.GAPPS) ? URL_GAPPS : URL_VANILLA;
                 final long totalBytes = (flavor == Flavor.GAPPS) ? ESTIMATED_GAPPS_BYTES : ESTIMATED_VANILLA_BYTES;
                 // Download into the app's own cache dir, NOT STAGE_DIR directly: this
@@ -913,6 +935,7 @@ public class MainActivity extends Activity {
                 if (extRet != 0 || !new File(SYSTEM_RAW).exists()) {
                     throw new Exception(getString(R.string.log_extract_failed, extRet));
                 }
+                } // end network download
 
                 appendLog(getString(R.string.log_extract_complete));
 
