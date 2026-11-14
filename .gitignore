@@ -4,3 +4,4 @@ keystore/
 backups_*/
 *.idsig
 logs/
+*.jks

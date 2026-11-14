@@ -268,24 +268,37 @@ enum { WAIT_REPLY, WAIT_COMPLETE, LOOP };
 
 // Reads and processes driver commands on `ctx` until the wait condition.
 // Returns 0, or a negative binder status for failed transactions.
+// The driver can return several commands in one read. Unprocessed ones are
+// kept per thread and context, and nested run() calls (a callback handled
+// while waiting) consume them in order, so returning early on a reply or
+// TRANSACTION_COMPLETE never drops a nested BR_TRANSACTION or an outer reply.
+static __thread struct { uint8_t buf[512]; size_t pos, got; } t_rq[2];
+
 static int run(int ctx, int mode, reply_t *rep) {
-    uint8_t rbuf[512];
     for (;;) {
-        size_t got = 0;
-        int e = bwr(ctx, NULL, 0, rbuf, sizeof rbuf, &got);
-        if (e) {
-            if (mode == LOOP) { usleep(10000); continue; }
-            return ST_FAILED_TRANSACTION;
+        if (t_rq[ctx].pos + 4 > t_rq[ctx].got) {
+            size_t got = 0;
+            t_rq[ctx].pos = t_rq[ctx].got = 0;
+            int e = bwr(ctx, NULL, 0, t_rq[ctx].buf, sizeof t_rq[ctx].buf, &got);
+            if (e) {
+                if (mode == LOOP) { usleep(10000); continue; }
+                return ST_FAILED_TRANSACTION;
+            }
+            t_rq[ctx].got = got;
         }
-        size_t pos = 0;
-        while (pos + 4 <= got) {
+        while (t_rq[ctx].pos + 4 <= t_rq[ctx].got) {
             uint32_t cmd;
-            memcpy(&cmd, rbuf + pos, 4);
-            pos += 4;
+            memcpy(&cmd, t_rq[ctx].buf + t_rq[ctx].pos, 4);
             size_t sz = _IOC_SIZE(cmd);
-            uint8_t *arg = rbuf + pos;
-            if (pos + sz > got) break;
-            pos += sz;
+            if (t_rq[ctx].pos + 4 + sz > t_rq[ctx].got) {
+                t_rq[ctx].pos = t_rq[ctx].got;  // truncated command; drop rest
+                break;
+            }
+            // Copy the argument out and advance before handling: a nested
+            // run() on this thread continues from the next command.
+            uint8_t arg[sizeof(struct binder_transaction_data) + 16];
+            memcpy(arg, t_rq[ctx].buf + t_rq[ctx].pos + 4, sz < sizeof arg ? sz : sizeof arg);
+            t_rq[ctx].pos += 4 + sz;
             switch (cmd) {
             case BR_NOOP:
             case BR_OK:
