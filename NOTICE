@@ -1,0 +1,18 @@
+OneLineage
+Copyright 2026 WeWaffles and the OneLineage contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes code adapted from OneOS
+(https://github.com/fahadalijaved/OneOS), Copyright the OneOS authors,
+licensed under the Apache License, Version 2.0:
+  - tools/patches/sec_ims_signature.py
+  - tools/patches/sec_ims_members.py
+Each file's header describes the changes made for OneLineage.
+
+The patched framework files in assets/ (framework_patched.jar,
+services_patched.jar, libstagefright_patched.so and similar) are modified
+builds of LineageOS / Android Open Source Project components and remain under
+their original licenses. Samsung software that OneLineage loads from the
+phone at run time (such as com.sec.imsservice) is not part of this
+repository and is not covered by this license.

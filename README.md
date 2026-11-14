@@ -53,7 +53,7 @@ Hot-switch between stock **One UI** and a **LineageOS 23.2 (Android 16) GSI** on
 ## Known issues
 - Returning to One UI may still need a manual reboot.
 - The guest binds the host's `media.codec`, whose AIDL hash differs from the GSI's, which can cause high CPU during codec enumeration.
-- No IMS stack in the guest, so **voice calls don't work** (data and SMS depend on One UI's `imsd`).
+- Voice calls over IMS are untested. SMS over IMS works through One UI's own IMS app running in the guest (see docs/SAMSUNG_IMS.md).
 - Developer options crash (the guest registers no `adb` service).
 - DTMF tones glitch, and deep-buffer audio hangs, so it stays disabled.
 - Never kill the host `netd` while Lineage is running.
@@ -65,3 +65,6 @@ Set `ANDROID_SDK_ROOT` (or `ANDROID_HOME`) to your Android SDK directory, instal
 ## Credits
 LineageOS GSI builds by MisterZtr (SourceForge). LineageOS and Android are trademarks of their respective owners. Not affiliated with Samsung, Google or LineageOS.
 WeWaffles (creator of OneLineage)
+
+## License
+OneLineage is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attributions, including code adapted from [OneOS](https://github.com/fahadalijaved/OneOS), and for the parts of this repository that keep their own licenses.
