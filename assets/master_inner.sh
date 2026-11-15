@@ -114,6 +114,10 @@ if [ ! -f /data/local/tmp/ol_shared ] && [ -x /data/ol_bridge ]; then
             chown media_rw:media_rw /data/media/0
             mkdir -p /data/misc/installd /data/misc/user /data/misc_ce /data/misc_de /data/misc/profiles/cur /data/misc/profiles/ref
             nohup sh -c 'while true; do /system/bin/installd; sleep 2; done' </dev/null >/data/ol_installd.log 2>&1 &
+            # Guest artd: every app install waits on it for dexopt. The host's
+            # is never bridged (it would compile into One UI's /data), so
+            # without this one installs hang forever.
+            nohup sh -c 'while true; do /apex/com.android.art/bin/artd; sleep 2; done' </dev/null >/data/ol_artd.log 2>&1 &
             sleep 1
             echo "[Pivoted Root] Lineage security daemons started (keystore2, gatekeeperd, credstore)"
         else
