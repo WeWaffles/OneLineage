@@ -9,4 +9,9 @@
     <!-- Keeps the clock and the battery the same distance from their corners
          (the privacy-dot side otherwise gets 20dp and the clock side none). -->
     <dimen name="rounded_corner_content_padding">20dp</dimen>
+    <!-- Round app icons, like a Pixel. AOSP's default mask is a rounded
+         square; Pixels set this circle in their device overlay, which a
+         generic PixelOS image does not ship. -->
+    <string name="config_icon_mask" translatable="false">"M50 0A50 50,0,1,1,50 100A50 50,0,1,1,50 0Z"</string>
+    <bool name="config_useRoundIcon">true</bool>
 </resources>
