@@ -15,6 +15,14 @@ if ! $BB pivot_root . postinstall; then
 fi
 $BB mount -t proc proc /proc
 
+# Mount propagation inside the container, like Android's init does: the
+# guest vold mounts the FUSE storage (/mnt/user/0/emulated, ...) after zygote
+# has already unshared its own namespace, and apps only see it if / is
+# shared (zygote makes itself a slave of it). The old host root stays
+# private so nothing propagates back into One UI.
+$BB mount --make-rshared / 2>/dev/null || true
+$BB mount --make-rprivate /postinstall 2>/dev/null || true
+
 export PATH=/system/bin:/system/xbin
 
 echo "[Pivoted Root] Setting up /data_mirror and /data/data mounts for Zygote isolation..."
