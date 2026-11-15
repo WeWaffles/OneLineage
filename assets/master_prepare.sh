@@ -476,8 +476,16 @@ chown 1000:1000 "$STAGE/data/resource-cache"
 rm -rf "$STAGE/data/data" 2>/dev/null || true
 mkdir -p "$STAGE/data/data"
 
-chmod -R 777 "$STAGE/data/user" "$STAGE/data/user_de" "$STAGE/data/misc" "$STAGE/data/misc_de" "$STAGE/data/misc_ce" "$STAGE/data/system" "$STAGE/data/system_de" "$STAGE/data/system_ce" "$STAGE/data/anr" "$STAGE/data/data" 2>/dev/null || true
-chown -R 1000:1000 "$STAGE/data/system" "$STAGE/data/system_de" "$STAGE/data/system_ce" "$STAGE/data/user" "$STAGE/data/user_de" "$STAGE/data/misc" "$STAGE/data/misc_de" "$STAGE/data/misc_ce" 2>/dev/null || true
+chmod -R 777 "$STAGE/data/misc" "$STAGE/data/misc_de" "$STAGE/data/misc_ce" "$STAGE/data/system" "$STAGE/data/system_de" "$STAGE/data/system_ce" "$STAGE/data/anr" "$STAGE/data/data" 2>/dev/null || true
+chown -R 1000:1000 "$STAGE/data/system" "$STAGE/data/system_de" "$STAGE/data/system_ce" "$STAGE/data/misc" "$STAGE/data/misc_de" "$STAGE/data/misc_ce" 2>/dev/null || true
+# App data: only the user roots, never recursively. Each app's own dir must
+# keep the uid installd gave it; a recursive chown to system made the guest's
+# PackageManager fail to prepare every app's storage on boot and "recover" by
+# deleting it, so app data (launcher layout, Firefox, ...) reset every switch.
+for d in "$STAGE/data/user" "$STAGE/data/user_de" "$STAGE/data/user/0" "$STAGE/data/user_de/0"; do
+    chown 1000:1000 "$d" 2>/dev/null || true
+    chmod 0771 "$d" 2>/dev/null || true
+done
 chown -R 10109:10109 "$STAGE/data/user_de/0/com.android.inputmethod.latin" "$STAGE/data/user/0/com.android.inputmethod.latin" 2>/dev/null || true
 
 # Create the bluetooth stack's storage before the guest ever starts. The GSI's
@@ -501,16 +509,15 @@ chmod 0770 "$STAGE/data/misc/bluedroid" "$STAGE/data/misc/bluetooth" 2>/dev/null
 # excluded so host data never gets relabeled.
 echo "=== 5b. Relabeling staged /data for guest SELinux ==="
 $BB chcon u:object_r:system_data_file:s0 "$STAGE/data" 2>/dev/null || true
-for d in data/system data/system_de data/system_ce data/user data/user_de \
+for d in data/system data/system_de data/system_ce \
          data/misc data/misc_de data/misc_ce data/anr data/dalvik-cache \
          data/local data/resource-cache data/app data/rollback data/incremental; do
     [ -e "$STAGE/$d" ] && $BB chcon -R u:object_r:system_data_file:s0 "$STAGE/$d" 2>/dev/null || true
 done
-for d in "$STAGE/data/user/0" "$STAGE/data/user_de/0"; do
-    if [ -d "$d" ]; then
-        $BB chcon u:object_r:system_data_file:s0 "$d" 2>/dev/null || true
-        $BB chcon -R u:object_r:app_data_file:s0 "$d"/* 2>/dev/null || true
-    fi
+# App data roots only: installd labels each app dir with that app's own MLS
+# categories, and relabeling them recursively stripped those.
+for d in "$STAGE/data/user" "$STAGE/data/user_de" "$STAGE/data/user/0" "$STAGE/data/user_de/0"; do
+    [ -d "$d" ] && $BB chcon u:object_r:system_data_file:s0 "$d" 2>/dev/null || true
 done
 # data/apex (host /data/apex) and data/adb (host /data/adb) are left alone: they
 # are the host's own directories bind-mounted in, already labeled correctly, and
