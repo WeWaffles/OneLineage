@@ -138,6 +138,40 @@ XML
     fi
 fi
 
+echo "=== 3c2. Screen shape overlay (camera hole, rounded corners) ==="
+# The image's framework-res says the screen is a plain rectangle, so SystemUI
+# laid the status bar out with the clock hugging the rounded top-left corner
+# and the whole row shifted left. This static framework overlay carries the
+# phone's real cutout and corner radius (tools/display_overlay). Overlays are
+# scanned at boot, so it must be in place before the guest starts. Same trick
+# as the IMS layer: a tiny tmpfs layer over product/overlay with an empty
+# placeholder, and the real APK bound onto it.
+DISP_APK="$STAGE/OneLineageDisplayOverlay.apk"
+DISP_DIR="${RET_PROD:+$RET_PROD/overlay}"
+if [ ! -f "$DISP_APK" ] || [ -z "$DISP_DIR" ] || [ ! -d "$DISP_DIR" ]; then
+    echo "Display overlay: off (no APK or no product/overlay)"
+elif mount | grep -q " $DISP_DIR type overlay"; then
+    echo "Display overlay: already mounted"
+else
+    chmod 644 "$DISP_APK"
+    chcon u:object_r:system_file:s0 "$DISP_APK" 2>/dev/null || true
+    DLAYER="$STAGE/display_layer"
+    mkdir -p "$DLAYER"
+    $BB umount -l "$DLAYER" 2>/dev/null || true
+    $BB mount -t tmpfs -o size=1m,mode=755 tmpfs "$DLAYER"
+    mkdir -p "$DLAYER/OneLineageDisplay"
+    touch "$DLAYER/OneLineageDisplay/OneLineageDisplayOverlay.apk"
+    chmod -R a+rX "$DLAYER"
+    chcon -R u:object_r:system_file:s0 "$DLAYER" 2>/dev/null || true
+    if $BB mount -t overlay overlay -o "ro,lowerdir=$DLAYER:$DISP_DIR" "$DISP_DIR" &&
+       $BB mount --bind "$DISP_APK" "$DISP_DIR/OneLineageDisplay/OneLineageDisplayOverlay.apk"; then
+        echo "Display overlay: staged"
+    else
+        echo "Display overlay: off (mount failed)"
+        $BB umount -l "$DISP_DIR" 2>/dev/null || true
+    fi
+fi
+
 echo "=== 3d. Samsung IMS in the guest (calls, SMS over IMS) ==="
 # T-Mobile runs voice only over IMS (and 5G SA has no circuit-switched voice at
 # all), and on a Samsung modem IMS is One UI's com.sec.imsservice. Copy THIS
@@ -341,6 +375,12 @@ if [ -f "$STAGE/framework_patched.jar" ]; then
     $BB umount -l "$ROOTFS/system/framework/framework.jar" 2>/dev/null || true
     $BB mount --bind "$STAGE/framework_patched.jar" "$ROOTFS/system/framework/framework.jar"
     echo "Bound framework_patched.jar -> $ROOTFS/system/framework/framework.jar"
+fi
+# Signal bars from the modem's cell info (tools/patch_telephony.sh).
+if [ -f "$STAGE/telephony-common_patched.jar" ]; then
+    $BB umount -l "$ROOTFS/system/framework/telephony-common.jar" 2>/dev/null || true
+    $BB mount --bind "$STAGE/telephony-common_patched.jar" "$ROOTFS/system/framework/telephony-common.jar"
+    echo "Bound telephony-common_patched.jar -> $ROOTFS/system/framework/telephony-common.jar"
 fi
 if [ -f "$STAGE/libaudio_aidl_conversion_common_cpp_patched.so" ]; then
     $BB umount -l "$ROOTFS/system/lib64/libaudio_aidl_conversion_common_cpp.so" 2>/dev/null || true
