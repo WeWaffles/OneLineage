@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
     private Button btnReturnOneUI;
     private Button btnBackupLauncher;
     private Button btnRestoreLauncher;
+    private Button btnExportLogs;
     private Button btnMenu;
     private TextView tabHome;
     private TextView tabSettings;
@@ -144,6 +145,7 @@ public class MainActivity extends Activity {
         btnReturnOneUI = findViewById(R.id.btn_return_oneui);
         btnBackupLauncher = findViewById(R.id.btn_backup_launcher);
         btnRestoreLauncher = findViewById(R.id.btn_restore_launcher);
+        btnExportLogs = findViewById(R.id.btn_export_logs);
         btnMenu = findViewById(R.id.btn_menu);
         downloadButtonIdleText = getString(R.string.btn_download_lineage);
 
@@ -160,6 +162,7 @@ public class MainActivity extends Activity {
         btnReturnOneUI.setOnClickListener(v -> returnToOneUI());
         btnBackupLauncher.setOnClickListener(v -> backupLauncher());
         btnRestoreLauncher.setOnClickListener(v -> restoreLauncher());
+        btnExportLogs.setOnClickListener(v -> exportLogs());
         btnMenu.setOnClickListener(v -> showPreferencesDrawer());
 
         tabHome = findViewById(R.id.tab_home);
@@ -505,6 +508,7 @@ public class MainActivity extends Activity {
         setThemedButton(btnDeleteLineage, palette.errorSurface, palette.error, palette.error);
         setThemedButton(btnBackupLauncher, palette.raisedSurface, palette.textPrimary, palette.accentRipple);
         setThemedButton(btnRestoreLauncher, palette.raisedSurface, palette.textPrimary, palette.accentRipple);
+        setThemedButton(btnExportLogs, palette.raisedSurface, palette.textPrimary, palette.accentRipple);
         setThemedButton(btnMenu, palette.raisedSurface, palette.textPrimary, palette.accentRipple);
 
         logScrollView.setBackground(roundDrawable(palette.logBackground, palette.outline, 16));
@@ -664,7 +668,35 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void appendLog(final String text) {
+    private static final java.text.SimpleDateFormat LOG_TS =
+            new java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US);
+    private final Object logFileLock = new Object();
+
+    // Persistent copy of the app log; lives outside filesDir so bootLineage's
+    // filesDir -> STAGE_DIR sync never copies it.
+    private File appLogFile() {
+        return new File(getNoBackupFilesDir(), "onepixel_app.log");
+    }
+
+    private void appendLog(String raw) {
+        final String text;
+        synchronized (LOG_TS) {
+            text = "[" + LOG_TS.format(new java.util.Date()) + "] " + raw;
+        }
+        synchronized (logFileLock) {
+            try {
+                File f = appLogFile();
+                if (f.length() > 2 * 1048576) {
+                    File old = new File(f.getPath() + ".1");
+                    old.delete();
+                    f.renameTo(old);
+                }
+                try (FileOutputStream out = new FileOutputStream(f, true)) {
+                    out.write((text + "\n").getBytes("UTF-8"));
+                }
+            } catch (Exception ignored) {
+            }
+        }
         mainHandler.post(() -> {
             if (tvConsoleLog != null) {
                 boolean wasAtBottom = logScrollView == null ||
@@ -695,6 +727,102 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             return -1;
         }
+    }
+
+    // Runs a root command and returns its combined output (trimmed), or "" on failure.
+    private String rootOut(String cmd) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(suBinary, "-c", cmd);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            StringBuilder sb = new StringBuilder();
+            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line).append('\n');
+            p.waitFor();
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    // Root command logged with its exit code and duration.
+    private int runRootLogged(String label, String cmd) {
+        long t0 = System.currentTimeMillis();
+        int ret = runRootCmdDrained(cmd);
+        appendLog("  " + label + ": rc=" + ret + " (" + (System.currentTimeMillis() - t0) + " ms)");
+        return ret;
+    }
+
+    private void logEnvironment() {
+        appendLog("== environment ==");
+        appendLog("  device: " + Build.MANUFACTURER + " " + Build.MODEL + " (" + Build.DEVICE + ")");
+        appendLog("  build: " + Build.DISPLAY + " / SDK " + Build.VERSION.SDK_INT
+                + " / patch " + Build.VERSION.SECURITY_PATCH);
+        appendLog("  su: " + suBinary);
+        String info = rootOut(
+                "echo \"kernel: $(uname -r)\"; " +
+                "echo \"ksud: $(/data/adb/ksud -V 2>/dev/null)\"; " +
+                "echo \"busybox: $(which busybox 2>/dev/null || ls /data/adb/ksu/bin/busybox 2>/dev/null)\"; " +
+                "echo \"stage free: $(df -h " + STAGE_DIR + " 2>/dev/null | tail -n 1)\"; " +
+                "echo \"images: $(ls -la " + STAGE_DIR + "/*.img 2>/dev/null | awk '{print $5, $NF}' | tr '\\n' ' ')\"; " +
+                "echo \"one ui launcher pkgs: $(pm list packages 2>/dev/null | grep -c sec.android.app.launcher)\"; " +
+                "echo \"uptime: $(cat /proc/uptime)\"");
+        for (String l : info.split("\n")) appendLog("  " + l);
+    }
+
+    // Follows a root-owned log file into the app log until stopAfterMs elapse
+    // or the app process dies (expected when the switch stops One UI).
+    private void followLog(final String path, final String prefix, final long stopAfterMs) {
+        new Thread(() -> {
+            try {
+                ProcessBuilder pb = new ProcessBuilder(suBinary, "-c",
+                        "timeout " + (stopAfterMs / 1000) + " tail -n +1 -F " + path + " 2>/dev/null");
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = r.readLine()) != null) appendLog(prefix + line);
+                p.waitFor();
+            } catch (Exception e) {
+                appendLog(prefix + "(log follow stopped: " + e.getMessage() + ")");
+            }
+        }, "log-follow").start();
+    }
+
+    private void exportLogs() {
+        if (!isRootGranted) {
+            appendLog(getString(R.string.log_root_required_export));
+            return;
+        }
+        appendLog(getString(R.string.log_export_start));
+        executor.execute(() -> {
+            String ts = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new java.util.Date());
+            String out = "/sdcard/Download/OnePixel-logs-" + ts + ".txt";
+            String app = appLogFile().getAbsolutePath();
+            String S = STAGE_DIR;
+            String cmd = "OUT=" + out + "; mkdir -p /sdcard/Download; { " +
+                    "sec() { echo; echo \"===== $1 =====\"; }; " +
+                    "sec exported; date; " +
+                    "sec device; getprop ro.product.model; getprop ro.build.display.id; uname -a; cat /proc/uptime; " +
+                    "sec 'app log (previous)'; cat " + app + ".1 2>/dev/null; " +
+                    "sec 'app log'; cat " + app + " 2>/dev/null; " +
+                    "sec 'stage dir'; ls -la " + S + " 2>&1; df -h " + S + " 2>&1; " +
+                    "for f in " + S + "/*.log " + S + "/data/local/tmp/*.log " + S + "/data/ol_*.log; do " +
+                    "  [ -f \"$f\" ] || continue; sec \"$f\"; tail -n 3000 \"$f\"; done; " +
+                    "sec 'mounts (stage)'; grep lineage_stage /proc/mounts; " +
+                    "sec getprop; getprop | grep -iE 'gsm|ril|ims|boot|build.version|persist.sys'; " +
+                    "sec 'dmesg tail'; dmesg 2>/dev/null | tail -n 400; " +
+                    "sec 'logcat tail'; logcat -d -t 2000 2>/dev/null; " +
+                    "} > $OUT 2>&1; chmod 644 $OUT; ls -la $OUT";
+            long t0 = System.currentTimeMillis();
+            String res = rootOut(cmd);
+            if (res.contains(out)) {
+                appendLog(getString(R.string.log_export_done, out, System.currentTimeMillis() - t0));
+            } else {
+                appendLog(getString(R.string.log_export_failed, res));
+            }
+        });
     }
 
     private void setLogStatus(final String status) {
@@ -1227,14 +1355,21 @@ public class MainActivity extends Activity {
         setLogStatus(getString(R.string.status_switching));
         executor.execute(() -> {
             try {
+                long tBoot = System.currentTimeMillis();
+                logEnvironment();
+                appendLog("== switch to PixelOS ==");
                 File filesDir = getFilesDir();
+                String[] staged = filesDir.list();
+                appendLog("  syncing " + (staged == null ? 0 : staged.length) + " files to " + STAGE_DIR);
                 String syncCmd = "for f in " + filesDir.getAbsolutePath() + "/*; do " +
                                  "  base=$(basename \"$f\"); " +
                                  "  cp -f \"$f\" \"" + STAGE_DIR + "/$base\"; " +
                                  "done && " +
                                  "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/ol_bridge " + STAGE_DIR + "/7zz";
-                Runtime.getRuntime().exec(new String[]{suBinary, "-c", syncCmd}).waitFor();
-                applyIsolationFlag(getSharedPreferences("onelineage", MODE_PRIVATE).getBoolean("isolated", true));
+                runRootLogged("sync assets", syncCmd);
+                boolean iso = getSharedPreferences("onelineage", MODE_PRIVATE).getBoolean("isolated", true);
+                appendLog("  isolated mode: " + iso);
+                applyIsolationFlag(iso);
 
                 String stageScript = STAGE_DIR + "/switch_to_lineage.sh";
                 String cmd = "stageScript=" + STAGE_DIR + "/switch_to_lineage.sh; " +
@@ -1246,9 +1381,10 @@ public class MainActivity extends Activity {
                              "else " +
                              "  nohup /system/bin/sh $stageScript </dev/null >" + STAGE_DIR + "/takeover_app.log 2>&1 & " +
                              "fi";
-                Process p = Runtime.getRuntime().exec(new String[]{suBinary, "-c", cmd});
-                p.waitFor();
+                runRootLogged("spawn switch_to_lineage.sh", "rm -f " + STAGE_DIR + "/takeover_app.log; " + cmd);
                 appendLog(getString(R.string.log_takeover_spawned));
+                appendLog("  prep took " + (System.currentTimeMillis() - tBoot) + " ms; following takeover_app.log");
+                followLog(STAGE_DIR + "/takeover_app.log", "  [takeover] ", 600000);
             } catch (Exception e) {
                 appendLog(getString(R.string.log_launch_failed, e.getMessage()));
                 setLogStatus(getString(R.string.status_error));
@@ -1265,6 +1401,8 @@ public class MainActivity extends Activity {
         setLogStatus(getString(R.string.status_restoring));
         executor.execute(() -> {
             try {
+                logEnvironment();
+                appendLog("== return to One UI ==");
                 String stageScript = STAGE_DIR + "/return_to_oneui.sh";
                 String cmd = "stageScript=" + STAGE_DIR + "/return_to_oneui.sh; " +
                              "chmod 755 $stageScript; " +
@@ -1275,9 +1413,9 @@ public class MainActivity extends Activity {
                              "else " +
                              "  nohup /system/bin/sh $stageScript </dev/null >" + STAGE_DIR + "/restore_app.log 2>&1 & " +
                              "fi";
-                Process p = Runtime.getRuntime().exec(new String[]{suBinary, "-c", cmd});
-                p.waitFor();
+                runRootLogged("spawn return_to_oneui.sh", "rm -f " + STAGE_DIR + "/restore_app.log; " + cmd);
                 appendLog(getString(R.string.log_restore_triggered));
+                followLog(STAGE_DIR + "/restore_app.log", "  [restore] ", 600000);
             } catch (Exception e) {
                 appendLog(getString(R.string.log_restore_failed, e.getMessage()));
                 setLogStatus(getString(R.string.status_error));

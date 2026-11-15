@@ -144,4 +144,9 @@
     <string name="isolation_off_log">Shared mode for the next run. One UI is less protected!</string>
     <string name="btn_appearance">Theme &amp; language</string>
     <string name="made_by">OnePixel • made by eggdog  ♡</string>
+    <string name="btn_export_logs">Save logs to a file</string>
+    <string name="log_root_required_export">Root access is required to export logs.</string>
+    <string name="log_export_start">Exporting logs…</string>
+    <string name="log_export_done">Logs saved to %1$s (%2$d ms)</string>
+    <string name="log_export_failed">Log export failed: %1$s</string>
 </resources>

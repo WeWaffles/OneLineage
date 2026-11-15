@@ -128,4 +128,9 @@
     <string name="log_backup_failed">Falha ao salvar: %1$s</string>
     <string name="log_launcher_restore_start">\nRestaurando o layout da tela inicial da One UI…</string>
     <string name="log_launcher_restore_failed">Falha ao restaurar: %1$s</string>
+    <string name="btn_export_logs">Salvar registros em arquivo</string>
+    <string name="log_root_required_export">Acesso root é necessário para exportar registros.</string>
+    <string name="log_export_start">Exportando registros…</string>
+    <string name="log_export_done">Registros salvos em %1$s (%2$d ms)</string>
+    <string name="log_export_failed">Falha ao exportar registros: %1$s</string>
 </resources>

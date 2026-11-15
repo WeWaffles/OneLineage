@@ -181,6 +181,18 @@
                     android:textColor="@color/m3_log_text"
                     android:textSize="11sp" />
             </ScrollView>
+
+            <Button
+                android:id="@+id/btn_export_logs"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/btn_m3_tonal"
+                android:text="@string/btn_export_logs"
+                android:textAllCaps="false"
+                android:textColor="@color/m3_text_primary"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif-medium" />
         </LinearLayout>
     </LinearLayout>
     </ScrollView>
