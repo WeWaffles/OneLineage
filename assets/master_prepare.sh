@@ -4,6 +4,17 @@ ROOTFS="$STAGE/rootfs"
 BB=$(which busybox 2>/dev/null || echo "/data/adb/ksu/bin/busybox")
 [ -x "$BB" ] || BB=$(find /data/adb /system /data -name busybox 2>/dev/null | head -n 1)
 
+# Bind a staged replacement over a guest file. The staged copy lives under
+# /data/local/tmp (shell_data_file); give it the SELinux label of the file it
+# replaces first, or under enforcing the guest's own domains cannot use it
+# (webview_zygote aborts on "Unable to restat fd", apps cannot map their code).
+bind_file() {
+    $BB umount -l "$2" 2>/dev/null || true
+    _l=$(stat -c %C "$2" 2>/dev/null)
+    [ -n "$_l" ] && chcon "$_l" "$1" 2>/dev/null
+    $BB mount --bind "$1" "$2"
+}
+
 # Disable kernel softlockup and hung-task panics for the duration of the
 # container boot. The APEX extraction and pivot_root chain can stall a CPU for
 # many seconds (especially on A35/M35 Exynos where the hardware is slow and the
@@ -126,7 +137,7 @@ else
     chmod -R a+rX "$DLAYER"
     chcon -R u:object_r:system_file:s0 "$DLAYER" 2>/dev/null || true
     if $BB mount -t overlay overlay -o "lowerdir=$DLAYER:$DISP_DIR" "$DISP_DIR" &&
-       $BB mount --bind "$DISP_APK" "$DISP_DIR/OneLineageDisplay/OneLineageDisplayOverlay.apk"; then
+       bind_file "$DISP_APK" "$DISP_DIR/OneLineageDisplay/OneLineageDisplayOverlay.apk"; then
         echo "Display overlay: staged"
     else
         echo "Display overlay: off (mount failed)"
@@ -206,7 +217,7 @@ else
         if $BB mount -t overlay overlay -o "lowerdir=$LAYER:$ROOTFS/system/system_ext" "$ROOTFS/system/system_ext"; then
             bound=1
             for f in $(cd "$SECIMS" && find . -type f ! -name '*.xml'); do
-                $BB mount --bind "$SECIMS/$f" "$ROOTFS/system/system_ext/$f" || bound=0
+                bind_file "$SECIMS/$f" "$ROOTFS/system/system_ext/$f" || bound=0
             done
             if [ $bound = 1 ]; then
                 touch "$STAGE/data/local/tmp/ol_secims_staged"
@@ -235,13 +246,11 @@ if [ -d /system_ext/apex ]; then
 fi
 mount | grep -q "$ROOTFS/mnt " || $BB mount --rbind /mnt "$ROOTFS/mnt"
 if [ -f "$STAGE/services_patched.jar" ]; then
-    $BB umount -l "$ROOTFS/system/framework/services.jar" 2>/dev/null || true
-    $BB mount --bind "$STAGE/services_patched.jar" "$ROOTFS/system/framework/services.jar"
+    bind_file "$STAGE/services_patched.jar" "$ROOTFS/system/framework/services.jar"
     echo "Bound services_patched.jar -> $ROOTFS/system/framework/services.jar"
 fi
 if [ -f "$STAGE/framework_patched.jar" ]; then
-    $BB umount -l "$ROOTFS/system/framework/framework.jar" 2>/dev/null || true
-    $BB mount --bind "$STAGE/framework_patched.jar" "$ROOTFS/system/framework/framework.jar"
+    bind_file "$STAGE/framework_patched.jar" "$ROOTFS/system/framework/framework.jar"
     echo "Bound framework_patched.jar -> $ROOTFS/system/framework/framework.jar"
 fi
 # Audio port list fix. Samsung's audio policy reports a "Built-In 2 Mic" device
@@ -302,8 +311,7 @@ if [ -f "$SF_PATCH" ]; then
     echo "Bound libstagefright_patched.so"
 fi
 if [ -f "$STAGE/framework-res_patched.apk" ]; then
-    $BB umount -l "$ROOTFS/system/framework/framework-res.apk" 2>/dev/null || true
-    $BB mount --bind "$STAGE/framework-res_patched.apk" "$ROOTFS/system/framework/framework-res.apk"
+    bind_file "$STAGE/framework-res_patched.apk" "$ROOTFS/system/framework/framework-res.apk"
     echo "Bound framework-res_patched.apk -> $ROOTFS/system/framework/framework-res.apk"
 fi
 
@@ -311,8 +319,7 @@ if [ -f "$STAGE/PermissionController_patched.apk" ]; then
     chmod 644 "$STAGE/PermissionController_patched.apk"
     PERM_APK=$(find "$ROOTFS/apex/com.android.permission" -name "PermissionController.apk" 2>/dev/null | head -n 1)
     if [ -n "$PERM_APK" ]; then
-        $BB umount -l "$PERM_APK" 2>/dev/null || true
-        $BB mount --bind "$STAGE/PermissionController_patched.apk" "$PERM_APK"
+        bind_file "$STAGE/PermissionController_patched.apk" "$PERM_APK"
         echo "Bound PermissionController_patched.apk -> $PERM_APK"
     fi
 fi
@@ -439,11 +446,27 @@ chmod 0770 "$STAGE/data/misc/bluedroid" "$STAGE/data/misc/bluetooth" 2>/dev/null
 # excluded so host data never gets relabeled.
 echo "=== 5b. Relabeling staged /data for guest SELinux ==="
 $BB chcon u:object_r:system_data_file:s0 "$STAGE/data" 2>/dev/null || true
-for d in data/system data/system_de data/system_ce data/user data/user_de \
-         data/misc data/misc_de data/misc_ce data/anr data/dalvik-cache \
-         data/local data/resource-cache data/app data/rollback data/incremental; do
-    [ -e "$STAGE/$d" ] && $BB chcon -R u:object_r:system_data_file:s0 "$STAGE/$d" 2>/dev/null || true
+# restorecon labels by path against One UI's file_contexts, which belong to the
+# loaded policy, so it only sees the staged tree as "/data" in a private mount
+# namespace (a plain, non-recursive bind: host mounts nested in the stage such
+# as /data/adb or /data/media are not carried in, so they are never relabeled).
+# App data dirs under user/ and user_de/ are skipped by restorecon itself; their
+# per-app labels belong to installd. -F once, to undo older blanket relabels.
+RL_DIRS=""
+for d in "$STAGE/data"/*; do
+    n=${d##*/}
+    case "$n" in adb|apex|media|user|user_de|data) continue ;; esac
+    [ -d "$d" ] || continue
+    RL_DIRS="$RL_DIRS /data/$n"
 done
+RL_FORCE=""
+[ -f "$STAGE/.relabel_v2" ] || RL_FORCE=F
+if $BB unshare -m sh -c "$BB mount --make-rprivate / && $BB mount --bind '$STAGE/data' /data && restorecon -R$RL_FORCE /data/user /data/user_de $RL_DIRS" >/dev/null 2>&1; then
+    touch "$STAGE/.relabel_v2"
+    echo "Relabeled staged /data with restorecon"
+else
+    echo "!!! WARNING: restorecon of staged /data failed"
+fi
 for d in "$STAGE/data/user/0" "$STAGE/data/user_de/0"; do
     if [ -d "$d" ]; then
         $BB chcon u:object_r:system_data_file:s0 "$d" 2>/dev/null || true
@@ -930,6 +953,10 @@ else
     cp -a /apex/apex-info-list.xml "$ROOTFS/apex/" 2>/dev/null || true
 fi
 chmod 644 "$ROOTFS/apex/apex-info-list.xml" 2>/dev/null || true
+# Label them like the real /apex (a bare tmpfs is unreadable to the guest's
+# system_server once SELinux is enforcing).
+chcon u:object_r:apex_mnt_dir:s0 "$ROOTFS/apex" 2>/dev/null || true
+chcon u:object_r:apex_info_file:s0 "$ROOTFS/apex/apex-info-list.xml" 2>/dev/null || true
 
 echo "=== 8. Direct Mounting Extracted APEX Payloads ==="
 mount_payload() {
@@ -1032,8 +1059,7 @@ done
 if [ -f "$STAGE/PermissionController_patched.apk" ]; then
     chmod 644 "$STAGE/PermissionController_patched.apk" 2>/dev/null || true
     for PERM_APK in $(find "$ROOTFS/apex/com.android.permission" -name "PermissionController.apk" 2>/dev/null); do
-        $BB umount -l "$PERM_APK" 2>/dev/null || true
-        $BB mount --bind "$STAGE/PermissionController_patched.apk" "$PERM_APK" 2>/dev/null && echo "Bound PermissionController_patched.apk (late) -> $PERM_APK"
+        bind_file "$STAGE/PermissionController_patched.apk" "$PERM_APK" 2>/dev/null && echo "Bound PermissionController_patched.apk (late) -> $PERM_APK"
     done
 else
     echo "!!! WARNING: PermissionController_patched.apk missing from $STAGE"

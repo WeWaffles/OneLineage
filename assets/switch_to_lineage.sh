@@ -29,9 +29,30 @@ echo "=== LINEAGEOS 23.2 TAKEOVER STARTING ==="
 # (e.g. settings.db "doesn't exist", users/0.xml EACCES). master_prepare.sh
 # relabels the staged /data properly, but permissive is the safety net that
 # keeps the rest of the guest boot from tripping over labels we cannot predict.
-# return_to_oneui.sh restores enforcing.
+# The UI activator below turns enforcing back on once Lineage is up, and
+# return_to_oneui.sh makes sure it is on.
 setenforce 0 2>/dev/null || true
 echo "SELinux mode: $(getenforce 2>/dev/null || echo unknown)"
+
+# Policy additions the guest needs under enforcing (live only; gone at reboot).
+# - The guest's zygote runs as KernelSU's domain, so its ART memfds (e.g.
+#   boot-image-methods.art) are plain tmpfs; apps and system_server map them.
+# - Host installd restores guest app data labels with One UI's seapp_contexts,
+#   which leaves a few system apps' data as system_data_file.
+KSUD=/data/adb/ksud
+GUEST_RULES="allow { system_server appdomain } tmpfs file { read map getattr }"
+GUEST_RULES="$GUEST_RULES; allow installd system_data_file { dir file } relabelto"
+# - Bluetooth and SecureElement data dirs end up system_data_file for the same
+#   reason; without these the Bluetooth database cannot be opened.
+for d in bluetooth secure_element; do
+    GUEST_RULES="$GUEST_RULES; allow $d system_data_file dir { search getattr open read write add_name remove_name }"
+    GUEST_RULES="$GUEST_RULES; allow $d system_data_file file { create open read write append getattr setattr lock ioctl map unlink rename }"
+done
+if [ -x "$KSUD" ] && "$KSUD" sepolicy patch "$GUEST_RULES" >/dev/null 2>&1; then
+    echo "SELinux: guest policy rules applied"
+else
+    echo "!!! WARNING: could not apply guest policy rules"
+fi
 # Everything below needs full root (permissive SELinux, ctl.* properties,
 # mounts). A restricted su (e.g. a KernelSU app profile without full
 # capabilities) gets part-way - including bind mounts over the live One UI -
@@ -335,6 +356,10 @@ if ! sh "$STAGE/lock_guard.sh" reserve "$GUEST_META/password_slots/slot_map" \
     setenforce 1 2>/dev/null || true
     exit 1
 fi
+# Real labels, as on the host's /metadata: the guest's system_server
+# (u:r:system_server) cannot use shell_data_file once SELinux is enforcing.
+chcon u:object_r:metadata_file:s0 "$GUEST_META" 2>/dev/null || true
+chcon -R u:object_r:password_slot_metadata_file:s0 "$GUEST_META/password_slots" 2>/dev/null || true
 echo "Weaver slots fenced for the guest."
 echo "NOTE: do not set a screen lock / PIN inside LineageOS: it shares this phone's lock-screen hardware (Weaver) with One UI."
 
@@ -559,6 +584,11 @@ while true; do
                 sleep 2
             done
             echo \"[UI Activator] sm mount result: _sm_ok=\$_sm_ok (attempts: \$_attempt)\"
+
+            # The takeover runs permissive; once Lineage is up, enforce SELinux
+            # for the rest of the session (return_to_oneui.sh keeps it on).
+            setenforce 1 2>/dev/null || true
+            echo \"[UI Activator] SELinux: \$(getenforce)\"
             break
         fi
     fi

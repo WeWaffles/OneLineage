@@ -38,7 +38,7 @@ Hot-switch between stock **One UI** and a **LineageOS 23.2 (Android 16) GSI** on
 
 ### Boot and environment fixes
 1. **APEX paths in the container.** Host `/system/apex` and `/system_ext/apex` are bound into the rootfs after the GSI payloads are extracted, so PackageManagerService stops dying in `scanApexPackages`.
-2. **SELinux labels on the staged `/data`.** The tree is relabeled like a real `/data` (`system_data_file`, per-package `app_data_file`) instead of `shell_data_file`. Also `setenforce 0` during the takeover and `setenforce 1` on return.
+2. **SELinux.** The staged `/data` is labeled with `restorecon` against One UI's file contexts, as if it were the real `/data` (app data keeps the per-app labels installd gives it), and every patched file bound into Lineage takes the label of the file it replaces. The takeover boots Lineage permissive, then switches SELinux to **enforcing** once the home screen is up, for the rest of the session. A few policy rules are added live with `ksud sepolicy patch` (gone at reboot): see `switch_to_lineage.sh`.
 3. **Audio hang.** Host `audioserver`/`cameraserver` are left running (they used to be stopped/frozen, which deadlocked `AudioService`). Only the host zygote is suppressed.
 4. **Runaway `sf.log`.** SurfaceFlinger output goes to `/dev/null` (it was growing to hundreds of MB in minutes).
 5. **App data ownership.** `fix_app_dirs.sh` re-owns app data dirs to the uid PackageManager assigned, strips write bits from dex/apk/jar files (ART refuses writable dex), and creates missing dirs such as `/data/misc/bluedroid`.
