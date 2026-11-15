@@ -14,7 +14,8 @@
 // services that hold One UI state (keystore, gatekeeper service, vold, Weaver,
 // authsecret, ...). The guest gets local stubs for Weaver and AuthSecret that
 // fail every call, so its LockSettings treats them as unavailable instead of
-// blocking on them, and never reaches the host's.
+// blocking on them, and never reaches the host's. The gatekeeper HAL is not
+// forwarded either: the guest gets a software one (soft_gk.h).
 //
 // Limits (v1): AIDL only (no HIDL scatter-gather objects; this device has no
 // HIDL services). Host services see the bridge (root) as the caller.
@@ -25,6 +26,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -467,10 +469,15 @@ static int translate(int src, const struct binder_transaction_data *tr, pbuf_t *
     return 0;
 }
 
+#include "soft_gk.h"
+
 static void stub_reply(int ctx, node_t *nd, struct binder_transaction_data *tr) {
     if (tr->flags & TF_ONE_WAY) return;
     pbuf_t p = {0};
-    if (tr->code == PING_TRANSACTION) {
+    if (!strcmp(nd->stub, GK_IFACE) && tr->code != PING_TRANSACTION && tr->code != INTERFACE_TRANSACTION) {
+        int32_t st = softgk_call(tr, &p);
+        send_reply(ctx, st ? NULL : &p, 0, st);
+    } else if (tr->code == PING_TRANSACTION) {
         send_reply(ctx, &p, 0, 0);
     } else if (tr->code == INTERFACE_TRANSACTION) {
         pb_str16(&p, nd->stub);
@@ -833,6 +840,8 @@ static const char *DENY[] = {
     "manager",
     "android.hardware.weaver.",
     "android.hardware.authsecret.",
+    // Holds One UI's lock screen enrollment; the guest gets soft_gk.h instead.
+    "android.hardware.gatekeeper.",
     "android.system.keystore2.",
     "android.security.",
     "android.service.gatekeeper.",
@@ -864,6 +873,7 @@ static int denied(const char *name) {
 static struct { const char *name; const char *iface; } STUBS[] = {
     {"android.hardware.weaver.IWeaver/default", "android.hardware.weaver.IWeaver"},
     {"android.hardware.authsecret.IAuthSecret/default", "android.hardware.authsecret.IAuthSecret"},
+    {"android.hardware.gatekeeper.IGatekeeper/default", GK_IFACE},
 };
 
 typedef struct { names_t names; uint32_t *handles; } mirror_t;

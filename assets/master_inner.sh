@@ -165,6 +165,25 @@ SF_PID=$!
 echo "[Pivoted Root] SurfaceFlinger PID: $SF_PID"
 sleep 2
 
+# Samsung touch power. One UI's input stack tells the touch IC about every
+# display on/off by writing "<state>,<event>" to /sys/class/sec/tsp/enabled
+# (state 2 = on, 1 = off; event 0 = early, 1 = late). A power-button cycle
+# wakes the IC on its own, but if the screen was off when One UI handed over,
+# PixelOS came up with a lit screen and a dead touchscreen. Turn the IC on
+# whenever the panel is lit and it is off.
+TSP=/sys/class/sec/tsp/enabled
+BL=/sys/class/backlight/panel0-backlight/brightness
+if [ -w $TSP ] && [ -r $BL ]; then
+    nohup sh -c "
+        while true; do
+            if [ \"\$(cat $BL 2>/dev/null)\" -gt 0 ] 2>/dev/null && [ \"\$(cat $TSP)\" = 0 ]; then
+                printf 2,0 > $TSP; printf 2,1 > $TSP
+            fi
+            sleep 1
+        done" </dev/null >/dev/null 2>&1 &
+    echo "[Pivoted Root] Touch power watcher started"
+fi
+
 echo "[Pivoted Root] Starting LineageOS BootAnimation..."
 setprop service.bootanim.exit 0
 /system/bin/bootanimation > /data/anim.log 2>&1 &
