@@ -169,7 +169,12 @@ public class MainActivity extends Activity {
         tabHome.setOnClickListener(v -> showTab(false));
         tabSettings.setOnClickListener(v -> showTab(true));
         swIsolation.setChecked(getSharedPreferences("onelineage", MODE_PRIVATE).getBoolean("isolated", true));
-        swIsolation.setOnCheckedChangeListener((b, on) -> setIsolation(on, true));
+        swIsolation.setOnCheckedChangeListener((b, on) -> {
+            if (on) { setIsolation(true, true); return; }
+            // Turning it off has to survive the gauntlet first.
+            setSwitchQuietly(true);
+            confirmIsolationOff(0);
+        });
         showTab(false);
         updateModePill();
     }
@@ -213,6 +218,54 @@ public class MainActivity extends Activity {
             swIsolation.setThumbTintList(ColorStateList.valueOf(iso ? currentPalette.accent : currentPalette.textTertiary));
             swIsolation.setTrackTintList(ColorStateList.valueOf(iso ? currentPalette.primarySurface : currentPalette.raisedSurface));
         }
+    }
+
+    /** Prompts in the isolation-off gauntlet: {title, message, yes, no}. */
+    private static final String[][] ISOLATION_GAUNTLET = {
+        {"Turn off isolated mode?", "PixelOS will share One UI's system services.", "Turn off", "Cancel"},
+        {"Are you sure?", "Like, actually sure?", "Yes", "No"},
+        {"Really sure?", "Isolated mode is the thing keeping PixelOS from poking One UI.", "Yes", "Keep it on"},
+        {"Hmm.", "Last time things were shared, One UI's app data got wiped. Just saying.", "I'm aware", "Oh no, keep it on"},
+        {"Okay but", "What if you didn't?", "I will", "Fair, I won't"},
+        {"Think of the keystore", "It has a family.", "Turn it off", "Spare the keystore"},
+        {"Are you REALLY sure?", "Positive? Certain? Absolutely 100%?", "100%", "Like 80%"},
+        {"Final answer?", "Lock it in?", "Lock it in", "Phone a friend"},
+        {"Wait", "Did you mean to tap that?", "Yes, I did", "No, misclick"},
+        {"Okay last one", "For real this time.", "Turn it off", "Cancel"},
+        {"Psych", "One more. Turn off isolated mode?", "JUST DO IT", "Fine, keep it"},
+    };
+
+    private void confirmIsolationOff(int step) {
+        if (step >= ISOLATION_GAUNTLET.length) {
+            android.widget.Toast.makeText(this, "Fine. Isolated mode is off. ( ._.)", android.widget.Toast.LENGTH_SHORT).show();
+            setSwitchQuietly(false);
+            setIsolation(false, true);
+            return;
+        }
+        String[] p = ISOLATION_GAUNTLET[step];
+        // Halfway through, the buttons swap sides to catch autopilot tapping.
+        boolean swap = step >= ISOLATION_GAUNTLET.length / 2 && step % 2 == 1;
+        android.content.DialogInterface.OnClickListener yes = (d, w) -> confirmIsolationOff(step + 1);
+        android.content.DialogInterface.OnClickListener no = (d, w) ->
+                android.widget.Toast.makeText(this, "Good call. Isolated mode stays on.", android.widget.Toast.LENGTH_SHORT).show();
+        android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this)
+                .setTitle(p[0] + "  (" + (step + 1) + "/" + ISOLATION_GAUNTLET.length + ")")
+                .setMessage(p[1])
+                .setCancelable(false);
+        if (swap) b.setPositiveButton(p[3], no).setNegativeButton(p[2], yes);
+        else b.setPositiveButton(p[2], yes).setNegativeButton(p[3], no);
+        b.show();
+    }
+
+    private void setSwitchQuietly(boolean on) {
+        swIsolation.setOnCheckedChangeListener(null);
+        swIsolation.setChecked(on);
+        swIsolation.setOnCheckedChangeListener((b, v) -> {
+            if (v) { setIsolation(true, true); return; }
+            setSwitchQuietly(true);
+            confirmIsolationOff(0);
+        });
+        updateModePill();
     }
 
     /** Isolated mode is on unless the guest finds data/local/tmp/ol_shared in the stage. */
