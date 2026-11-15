@@ -94,6 +94,13 @@ if [ -f "$STAGE/ol_audioparam.dex" ]; then
     cp -f "$STAGE/ol_audioparam.dex" "$STAGE/data/local/tmp/ol_audioparam.dex"
     chmod 644 "$STAGE/data/local/tmp/ol_audioparam.dex"
 fi
+# Gives the host audioserver Lineage's app and permission lists (see
+# tools/audio_perms): the guest dumps them, switch_to_lineage.sh pushes them.
+rm -f "$STAGE/data/local/tmp/ol_audio_perms.txt"
+if [ -f "$STAGE/ol_audio_perms.dex" ]; then
+    cp -f "$STAGE/ol_audio_perms.dex" "$STAGE/data/local/tmp/ol_audio_perms.dex"
+    chmod 644 "$STAGE/data/local/tmp/ol_audio_perms.dex"
+fi
 
 # This phone's real screen shape (camera hole, rounded corners) for the
 # guest's framework, so SystemUI lays the status bar out around them (see
@@ -378,8 +385,37 @@ chown 1000:1000 "$STAGE/data/resource-cache"
 rm -rf "$STAGE/data/data" 2>/dev/null || true
 mkdir -p "$STAGE/data/data"
 
-chmod -R 777 "$STAGE/data/user" "$STAGE/data/user_de" "$STAGE/data/misc" "$STAGE/data/misc_de" "$STAGE/data/misc_ce" "$STAGE/data/system" "$STAGE/data/system_de" "$STAGE/data/system_ce" "$STAGE/data/anr" "$STAGE/data/data" 2>/dev/null || true
-chown -R 1000:1000 "$STAGE/data/system" "$STAGE/data/system_de" "$STAGE/data/system_ce" "$STAGE/data/user" "$STAGE/data/user_de" "$STAGE/data/misc" "$STAGE/data/misc_de" "$STAGE/data/misc_ce" 2>/dev/null || true
+chmod -R 777 "$STAGE/data/misc_de" "$STAGE/data/misc_ce" "$STAGE/data/system" "$STAGE/data/system_de" "$STAGE/data/system_ce" "$STAGE/data/anr" "$STAGE/data/data" 2>/dev/null || true
+chown -R 1000:1000 "$STAGE/data/system" "$STAGE/data/system_de" "$STAGE/data/system_ce" "$STAGE/data/misc_de" "$STAGE/data/misc_ce" 2>/dev/null || true
+# /data/misc gets the same treatment, except misc/profiles: installd requires
+# each app's current-profile dir to be <uid>:<uid> 0700, and when it is not,
+# createAppData fails ("Failed to prepare profiles for <pkg>") and PackageManager
+# wipes the app's whole data dir to recover.
+$BB find "$STAGE/data/misc" -path "$STAGE/data/misc/profiles" -prune -o -exec chmod 777 {} + 2>/dev/null || true
+$BB find "$STAGE/data/misc" -path "$STAGE/data/misc/profiles" -prune -o -exec chown 1000:1000 {} + 2>/dev/null || true
+# Earlier versions chowned the profile dirs to system. Repair them from the
+# owner of the app's CE dir (or drop them: they only hold JIT profiles, and
+# installd recreates missing ones).
+for d in "$STAGE/data/misc/profiles/cur/0"/*; do
+    [ -d "$d" ] || continue
+    want=$(stat -c %u "$STAGE/data/user/0/${d##*/}" 2>/dev/null)
+    [ "$(stat -c %u:%a "$d")" = "$want:700" ] && continue
+    if [ -n "$want" ] && [ "$want" != 1000 ]; then
+        chown -R "$want:$want" "$d"; chmod 0700 "$d"
+    else
+        rm -rf "$d"
+    fi
+done
+# App data under user/ and user_de/ is left alone: it belongs to each app's
+# uid with mode 0700. installd's createAppData refuses an existing dir whose
+# owner or mode is wrong, and PackageManager then DELETES it and makes a new
+# empty one ("Failed to create app data for <pkg>, but trying to recover").
+# A recursive chown/chmod here did that to every app's device-encrypted
+# storage on every switch, which signed the user out of every app and account.
+for d in "$STAGE/data/user" "$STAGE/data/user/0" "$STAGE/data/user_de" "$STAGE/data/user_de/0"; do
+    chown 1000:1000 "$d" 2>/dev/null || true
+    chmod 0771 "$d" 2>/dev/null || true
+done
 chown -R 10109:10109 "$STAGE/data/user_de/0/com.android.inputmethod.latin" "$STAGE/data/user/0/com.android.inputmethod.latin" 2>/dev/null || true
 
 # Create the bluetooth stack's storage before the guest ever starts. The GSI's
@@ -411,7 +447,14 @@ done
 for d in "$STAGE/data/user/0" "$STAGE/data/user_de/0"; do
     if [ -d "$d" ]; then
         $BB chcon u:object_r:system_data_file:s0 "$d" 2>/dev/null || true
-        $BB chcon -R u:object_r:app_data_file:s0 "$d"/* 2>/dev/null || true
+        # Only label dirs still carrying the stage's shell_data_file label:
+        # relabeling an app's existing dir would strip its per-app categories.
+        for a in "$d"/*; do
+            case "$($BB ls -Zd "$a" 2>/dev/null)" in
+                *app_data_file*) ;;
+                *) $BB chcon -R u:object_r:app_data_file:s0 "$a" 2>/dev/null || true ;;
+            esac
+        done
     fi
 done
 # data/apex (host /data/apex) and data/adb (host /data/adb) are left alone: they
@@ -501,11 +544,11 @@ for tok in $(pm list packages -U 2>/dev/null); do
             created=$((created + 1))
         fi
     done
-    for d in "/data/misc/profiles/cur/0/$pkg" "/data/misc/profiles/ref/0/$pkg"; do
+    for d in "/data/misc/profiles/cur/0/$pkg"; do
         [ -d "$d" ] && continue
         if mkdir -p "$d" 2>/dev/null; then
             chown "$uid:$uid" "$d" 2>/dev/null
-            chmod 0771 "$d" 2>/dev/null
+            chmod 0700 "$d" 2>/dev/null
             profile_dirs=$((profile_dirs + 1))
         fi
     done
@@ -825,9 +868,22 @@ OL_DENSITY=540
     fi
 ) &
 last=""
+perms_sig=""
 while true; do
     sleep 10
     case "$(getprop sys.boot_completed)" in 1) ;; *) continue ;; esac
+    # Audio permissions: write Lineage's app list and audio permission holders
+    # for the host audioserver whenever packages or permission grants change
+    # (switch_to_lineage.sh pushes the file; see tools/audio_perms). Waits for
+    # the guest's own package manager, as the boot steps above do.
+    if [ -f /data/local/tmp/ol_audio_perms.dex ] && service check phone 2>/dev/null | grep -q ': found'; then
+        sig="$(md5sum /data/system/packages.list 2>/dev/null | cut -d' ' -f1) $(stat -c %Y /data/misc_de/0/apexdata/com.android.permission/runtime-permissions.xml /data/system/users/0/runtime-permissions.xml 2>/dev/null | tr -s '[:space:]' ' ')"
+        if [ "$sig" != "$perms_sig" ]; then
+            res=$(CLASSPATH=/data/local/tmp/ol_audio_perms.dex app_process /system/bin com.onelineage.audioperms.Main dump /data/local/tmp/ol_audio_perms.txt 2>&1 | grep audio_perms)
+            [ -f /data/local/tmp/ol_audio_perms.txt ] && chmod 644 /data/local/tmp/ol_audio_perms.txt && perms_sig=$sig
+            echo "$(date) ${res:-audio_perms: dump failed}" >> /data/app_storage.log
+        fi
+    fi
     netout=$(/system/bin/sh /data/local/tmp/net_fix.sh 2>/dev/null)
     [ -n "$netout" ] && echo "$(date) $netout" >> /data/app_storage.log
     cur=$(md5sum /data/system/packages.list 2>/dev/null | cut -d' ' -f1)

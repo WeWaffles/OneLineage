@@ -685,7 +685,7 @@ public class MainActivity extends Activity {
                 "zygote_exec", "ol_bridge", "clean_apex_info_list.xml",
                 "services_patched.jar", "framework_patched.jar",
                 "7zz", "PermissionController_patched.apk",
-                "OneLineageKnoxStub.apk", "ol_audioparam.dex",
+                "OneLineageKnoxStub.apk", "ol_audioparam.dex", "ol_audio_perms.dex",
                 "OneLineageDisplayOverlay.apk",
                 "libaudioclient_aidl_conversion_patched.so",
                 "libaudio_aidl_conversion_common_cpp_patched.so"

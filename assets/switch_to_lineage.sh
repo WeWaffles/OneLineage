@@ -371,11 +371,14 @@ sleep 1
 # send because of its "sent" sound (playSentSound), and any app doing the same
 # would die too. Keep only the codec processes down, which is what causes the
 # spin described above.
+# media.metrics is left running: audioserver and cameraserver report to it and
+# wait up to 5 s with their locks held whenever it is missing. Killing it every
+# few seconds made all audio calls stall for seconds (lag), and delivered app
+# state late, so a call app's mic was silenced as if it were in the background.
 setprop ctl.start media 2>/dev/null || true
-for svc in media.codec media.metrics; do
-    setprop ctl.stop $svc 2>/dev/null || true
-done
-kill -9 $(pidof media.codec) $(pidof media.metrics) 2>/dev/null || true
+setprop ctl.start mediametrics 2>/dev/null || true
+setprop ctl.stop media.codec 2>/dev/null || true
+kill -9 $(pidof media.codec) 2>/dev/null || true
 
 # Samsung's init restarts media.codec on demand whenever any binder client
 # requests IMediaCodecList. The one-shot kill above is not enough: within
@@ -394,13 +397,36 @@ while true; do
         setprop ctl.stop media.codec 2>/dev/null || true
         kill -9 \$(pidof media.codec) 2>/dev/null || true
     fi
-    if pidof media.metrics >/dev/null 2>&1; then
-        setprop ctl.stop media.metrics 2>/dev/null || true
-        kill -9 \$(pidof media.metrics) 2>/dev/null || true
-    fi
 done
 " </dev/null >/dev/null 2>&1 &
     echo "media.codec suppressor started"
+fi
+
+# Audio permissions (tools/audio_perms). The host audioserver checks app ops
+# and permissions against app and permission lists from system_server, and
+# keeps One UI's for the session: Lineage's push is refused because it arrives
+# through ol_bridge as root, and audioserver only takes it from uid 1000. With
+# One UI's lists, apps got the wrong package for their uid, so the mic app-op
+# check failed and audioserver silenced call apps' microphones (Discord). The
+# guest writes its lists to a file when they change; push them as uid 1000,
+# again if audioserver restarts.
+if [ -f "$STAGE/data/local/tmp/ol_audio_perms.dex" ] && \
+   ! ps -ef 2>/dev/null | grep -v grep | grep -q "audio_perms_push"; then
+    nohup $BB sh -c "
+# audio_perms_push
+D=$STAGE/data/local/tmp
+last=''
+while true; do
+    sleep 5
+    [ -f \$D/ol_audio_perms.txt ] || continue
+    sig=\"\$(md5sum \$D/ol_audio_perms.txt | cut -d' ' -f1) \$(pidof audioserver)\"
+    [ \"\$sig\" = \"\$last\" ] && continue
+    res=\$(su 1000 -c \"CLASSPATH=\$D/ol_audio_perms.dex app_process /system/bin com.onelineage.audioperms.Main push \$D/ol_audio_perms.txt\" 2>&1 | grep -E 'audio_perms|Exception' | head -2)
+    echo \"\$(date) \${res:-audio_perms: push failed}\" >> $STAGE/data/app_storage.log
+    case \"\$res\" in *sent*) last=\$sig ;; esac
+done
+" </dev/null >/dev/null 2>&1 &
+    echo "audio permission pusher started"
 fi
 
 # The IMediaCodecList AIDL mismatch makes system_server/SystemUI/mediaserver log
