@@ -7,6 +7,7 @@ pkill -9 -f "ctl.stop zygote" 2>/dev/null || true
 pkill -9 -f "kill -STOP" 2>/dev/null || true
 pkill -9 -f "ui_activator" 2>/dev/null || true
 pkill -9 -f "zygote_exec" 2>/dev/null || true
+pkill -9 -f "ol_bridge" 2>/dev/null || true
 # Stop the adb watchdog started by switch_to_lineage.sh before One UI's own
 # system_server comes back, so it cannot fight init over sys.usb.config.
 pkill -9 -f "adb_watchdog.sh" 2>/dev/null || true
@@ -15,6 +16,15 @@ pkill -9 -f "ims_watchdog.sh" 2>/dev/null || true
 # media.codec and rescue_boot_count handling is restored.
 pkill -9 -f "media_codec_suppress" 2>/dev/null || true
 pkill -9 -f "rescue_boot_suppress" 2>/dev/null || true
+# Guest mediaserver / idmap2d respawn loops and the guest daemons themselves
+# (anything not in init's mount namespace), then bring the host ones back.
+pkill -9 -f "while true; do /system/bin/mediaserver" 2>/dev/null || true
+pkill -9 -f "while true; do /system/bin/idmap2d" 2>/dev/null || true
+pkill -9 -f "while true; do /system/bin/installd" 2>/dev/null || true
+for p in $(pidof mediaserver idmap2d installd); do
+    [ "$(readlink /proc/$p/ns/mnt)" = "$(readlink /proc/1/ns/mnt)" ] || kill -9 $p 2>/dev/null
+done
+setprop ctl.start media 2>/dev/null || true
 pkill -9 -f "system_server" 2>/dev/null || true
 pkill -9 -f org.lineageos 2>/dev/null || true
 pkill -9 -x zygote64 2>/dev/null || true

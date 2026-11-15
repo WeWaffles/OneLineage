@@ -263,7 +263,7 @@ for pkg in com.android.providers.settings \
            com.android.providers.contacts \
            com.android.providers.calendar \
            org.lineageos.lineagesettings \
-           com.wewaffles.onelineage; do
+           com.eggdog.onepixel; do
     mkdir -p "$STAGE/data/user_de/0/$pkg/databases" \
              "$STAGE/data/user_de/0/$pkg/shared_prefs" \
              "$STAGE/data/user_de/0/$pkg/files/datastore/education" \
@@ -362,7 +362,14 @@ mount | grep -q "$ROOTFS/data " || $BB mount --bind "$STAGE/data" "$ROOTFS/data"
 mount | grep -q "$ROOTFS/data/adb " || $BB mount --bind /data/adb "$ROOTFS/data/adb"
 mount | grep -q "$ROOTFS/data/apex " || $BB mount --bind /data/apex "$ROOTFS/data/apex"
 mkdir -p "$ROOTFS/data/media"
-mount | grep -q "$ROOTFS/data/media " || $BB mount --bind /data/media "$ROOTFS/data/media" 2>/dev/null || true
+# PixelOS gets its OWN internal storage (stage/data/media), not One UI's.
+# The guest unlocks user 0 with its own vold/installd, and those must never
+# be able to see (or "recover") One UI's real /data/media.
+while mount | grep -q " $ROOTFS/data/media "; do
+    $BB umount -l "$ROOTFS/data/media" 2>/dev/null || break
+done
+chown 1023:1023 "$ROOTFS/data/media" 2>/dev/null || true
+chmod 770 "$ROOTFS/data/media" 2>/dev/null || true
 
 echo "=== 5e. Writing per-package data-dir helper ==="
 # Apps installed before the /data bridge existed have no CE/DE data dirs in the

@@ -214,11 +214,12 @@ fi
 
 # Ensure all scripts and engine binaries exist in $STAGE
 mkdir -p "$STAGE/data"
-APP_FILES="/data/user/0/com.wewaffles.onelineage/files"
+APP_FILES="/data/user/0/com.eggdog.onepixel/files"
+[ -d "$APP_FILES" ] || APP_FILES="/data/user/0/com.wewaffles.onelineage/files"
 if [ -d "$APP_FILES" ]; then
     cp -f "$APP_FILES"/* "$STAGE/" 2>/dev/null || true
 fi
-chmod 755 "$STAGE"/*.sh "$STAGE/zygote_exec" 2>/dev/null || true
+chmod 755 "$STAGE"/*.sh "$STAGE/zygote_exec" "$STAGE/ol_bridge" 2>/dev/null || true
 
 # --- MOUNT PREPARATION ---
 echo "=== [5/6] Executing Mount Hierarchy Preparation ==="
@@ -283,6 +284,12 @@ sleep 1
 # the GUEST /system/bin/mediaserver, which registers a matching media.player.
 setprop ctl.stop media 2>/dev/null || true
 kill -9 $(pidof mediaserver) 2>/dev/null || true
+# Same for idmap2d (overlay idmaps / fabricated overlays). The host one runs in
+# the host mount namespace and writes the guest's theme .frro files into the
+# HOST /data/resource-cache, where One UI's OverlayManager picks them up and the
+# PixelOS palette leaks into One UI. master_inner.sh starts the guest idmap2d.
+setprop ctl.stop idmap2d 2>/dev/null || true
+kill -9 $(pidof idmap2d) 2>/dev/null || true
 for svc in media.codec media.metrics; do
     setprop ctl.stop $svc 2>/dev/null || true
 done
@@ -298,6 +305,7 @@ kill -9 $(pidof media.codec) $(pidof media.metrics) 2>/dev/null || true
 # daemon that immediately kills any media.codec that init brings back.
 if ! ps -ef 2>/dev/null | grep -v grep | grep -q "media_codec_suppress"; then
     nohup $BB sh -c "
+# media_codec_suppress (marker for the ps check above and return_to_oneui.sh)
 while true; do
     sleep 3
     if pidof media.codec >/dev/null 2>&1; then
@@ -308,10 +316,18 @@ while true; do
         setprop ctl.stop media.metrics 2>/dev/null || true
         kill -9 \$(pidof media.metrics) 2>/dev/null || true
     fi
-    # Only the HOST mediaserver (root '/'); the guest one runs pivoted.
+    # Only the HOST mediaserver, i.e. one in init's mount namespace. (The
+    # guest one is pivoted, but /proc/PID/root still reads '/' for it, so
+    # compare namespaces, not roots.)
     for p in \$(pidof mediaserver); do
-        if [ \"\$(readlink /proc/\$p/root)\" = \"/\" ]; then
+        if [ \"\$(readlink /proc/\$p/ns/mnt)\" = \"\$(readlink /proc/1/ns/mnt)\" ]; then
             setprop ctl.stop media 2>/dev/null || true
+            kill -9 \$p 2>/dev/null || true
+        fi
+    done
+    for p in \$(pidof idmap2d); do
+        if [ \"\$(readlink /proc/\$p/ns/mnt)\" = \"\$(readlink /proc/1/ns/mnt)\" ]; then
+            setprop ctl.stop idmap2d 2>/dev/null || true
             kill -9 \$p 2>/dev/null || true
         fi
     done
@@ -339,6 +355,16 @@ cp -f "$STAGE/master_inner.sh" "$STAGE/data/master_inner.sh"
 chmod 755 "$STAGE/data/master_inner.sh"
 cp -f "$STAGE/zygote_exec" "$STAGE/data/zygote_exec"
 chmod 755 "$STAGE/data/zygote_exec"
+if [ -f "$STAGE/ol_bridge" ]; then
+    cp -f "$STAGE/ol_bridge" "$STAGE/data/ol_bridge"
+    chmod 755 "$STAGE/data/ol_bridge"
+    # On-demand host services (init "interface aidl" lines): the bridge gives
+    # the guest placeholders that start them on first use.
+    cat /system/etc/init/*.rc /system_ext/etc/init/*.rc /product/etc/init/*.rc \
+        /vendor/etc/init/*.rc /odm/etc/init/*.rc 2>/dev/null \
+        | sed -n 's/^[[:space:]]*interface aidl \([^[:space:]]*\).*/\1/p' | sort -u \
+        > "$STAGE/data/ol_lazy_services.txt"
+fi
 
 # Launch takeover inside isolated mount namespace
 $BB unshare -m $BB sh "$STAGE/data/master_inner.sh" </dev/null >"$STAGE/data/takeover.log" 2>&1 &

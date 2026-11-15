@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">OneLineage</string>
-    <string name="title_dashboard">OneLineage</string>
+    <string name="app_name">OnePixel</string>
+    <string name="title_dashboard">OnePixel</string>
     <string name="desc_dashboard">Dual userspace switcher for Galaxy S26 Ultra</string>
 
-    <string name="header_subtitle_oneui">Dual Userspace Switcher • One UI</string>
-    <string name="header_subtitle_lineage">Dual Userspace Switcher • LineageOS</string>
+    <string name="header_subtitle_oneui">PixelOS on your Galaxy • One UI active</string>
+    <string name="header_subtitle_lineage">PixelOS on your Galaxy • PixelOS active</string>
     <string name="system_status_title">System Status</string>
     <string name="status_root_checking">Checking root permissions…</string>
     <string name="status_root_granted">KernelSU Root Active</string>
@@ -13,10 +13,10 @@
     <string name="status_root_active_detail">✓ Root: KernelSU Active (uid=0)</string>
     <string name="status_root_denied_detail">✗ Root: Access Denied (KernelSU Required)</string>
     <string name="status_userspace_scanning">Current Userspace: Scanning…</string>
-    <string name="status_userspace_lineage">Current Userspace: LineageOS %1$s</string>
+    <string name="status_userspace_lineage">Current Userspace: PixelOS %1$s</string>
     <string name="status_userspace_oneui">Current Userspace: Samsung One UI (Stock)</string>
     <string name="status_userspace_oneui_short">Current Userspace: Samsung One UI</string>
-    <string name="status_image_checking">LineageOS Image: Checking…</string>
+    <string name="status_image_checking">PixelOS Image: Checking…</string>
     <string name="status_image_installed">Image: Installed &amp; Ready (%1$s)</string>
     <string name="status_image_missing">Image: Not Installed (Missing system.raw)</string>
     <string name="status_image_error">Image Check Error: %1$s</string>
@@ -24,7 +24,7 @@
     <string name="appearance_title">Appearance</string>
     <string name="open_settings">Open language and theme settings</string>
     <string name="settings_title">Preferences</string>
-    <string name="settings_subtitle">Personalize OneLineage</string>
+    <string name="settings_subtitle">Personalize OnePixel</string>
     <string name="language_title">App language</string>
     <string name="language_english">English</string>
     <string name="language_portuguese_brazil">Português (Brasil)</string>
@@ -34,7 +34,9 @@
     <string name="theme_option_violet">Violet</string>
     <string name="theme_option_amoled">AMOLED Black</string>
     <string name="theme_dialog_title">Choose a color theme</string>
+    <string name="theme_option_system">System colors</string>
     <string-array name="theme_names">
+        <item>@string/theme_option_system</item>
         <item>@string/theme_option_lineage</item>
         <item>@string/theme_option_ocean</item>
         <item>@string/theme_option_violet</item>
@@ -42,9 +44,9 @@
     </string-array>
 
     <string name="switch_userspace_title">Switch Userspace</string>
-    <string name="btn_boot_lineage">Switch to LineageOS</string>
+    <string name="btn_boot_lineage">▶  Run PixelOS</string>
     <string name="btn_return_oneui">Return to One UI</string>
-    <string name="image_title">LineageOS 23.2 Image</string>
+    <string name="image_title">PixelOS Image</string>
     <string name="image_variant_description">Select variant to download from official releases:</string>
     <string name="flavor_vanilla_title">Vanilla (Clean LineageOS)</string>
     <string name="flavor_vanilla_description">The lightweight option</string>
@@ -53,13 +55,13 @@
     <string name="flavor_desc_vanilla">Vanilla: The lightweight option</string>
     <string name="flavor_desc_gapps">MindTheGapps: LineageOS 23.2 + Google Play Store &amp; Services.</string>
 
-    <string name="btn_download_lineage">Download &amp; Install</string>
-    <string name="btn_download_reinstall">Reinstall Image</string>
+    <string name="btn_download_lineage">Download</string>
+    <string name="btn_download_reinstall">Download</string>
     <string name="btn_pause_download">Pause Download</string>
     <string name="btn_resume_download">Resume Download</string>
     <string name="btn_preparing">Preparing…</string>
     <string name="btn_installing">Installing…</string>
-    <string name="btn_delete_lineage">Delete LineageOS Files</string>
+    <string name="btn_delete_lineage">Delete</string>
     <string name="btn_backup_launcher">Backup Layout</string>
     <string name="btn_restore_launcher">Restore Layout</string>
 
@@ -75,7 +77,7 @@
     <string name="launcher_safety_description">Snapshots launcher layout &amp; widgets against battery death or reboot corruption.</string>
     <string name="activity_log_title">Activity Log</string>
     <string name="status_idle">Idle</string>
-    <string name="log_initialized">OneLineage initialized.\n</string>
+    <string name="log_initialized">OnePixel ready  (◕‿◕)\n</string>
 
     <string name="log_flavor_vanilla">Vanilla: The lightweight option</string>
     <string name="log_flavor_gapps">MindTheGapps: LineageOS 23.2 + Google Play Store &amp; Services.</string>
@@ -115,7 +117,7 @@
     <string name="log_cleanup_warning">✗ system.raw could not be fully removed (a loop device is still holding it busy). Try again, or reboot and retry.</string>
     <string name="log_cleanup_done">✓ LineageOS files deleted cleanly. All loop mounts detached!</string>
     <string name="log_delete_failed">Delete failed: %1$s</string>
-    <string name="log_boot_start">\n[START] Preparing LineageOS 23.2 takeover…</string>
+    <string name="log_boot_start">\n[START] Starting PixelOS…</string>
     <string name="log_takeover_spawned">Takeover daemon spawned successfully. Display switching is in progress…</string>
     <string name="log_launch_failed">Launch error: %1$s</string>
     <string name="log_return_start">\n[START] Restoring One UI and resetting display…</string>
@@ -126,4 +128,20 @@
     <string name="log_backup_failed">Backup failed: %1$s</string>
     <string name="log_launcher_restore_start">\nRestoring One UI Home Screen layout…</string>
     <string name="log_launcher_restore_failed">Restore failed: %1$s</string>
+
+    <string name="quick_run_title">Boot</string>
+    <string name="quick_run_description">Boot PixelOS on top of One UI. Nothing gets flashed.</string>
+    <string name="pill_isolated">● Isolated mode</string>
+    <string name="pill_shared">● Shared mode</string>
+    <string name="tab_home">⌂  Home</string>
+    <string name="tab_settings">⚙  Settings</string>
+    <string name="settings_page_title">Settings</string>
+    <string name="settings_page_subtitle">Tune how PixelOS runs</string>
+    <string name="isolation_title">Protection</string>
+    <string name="isolation_switch">Isolated mode</string>
+    <string name="isolation_description">PixelOS gets its own service registry and can\'t reach One UI\'s storage, keystore or theme daemons. Leave this on.</string>
+    <string name="isolation_on_log">Isolated mode on for the next run.</string>
+    <string name="isolation_off_log">Shared mode for the next run. One UI is less protected!</string>
+    <string name="btn_appearance">Theme &amp; language</string>
+    <string name="made_by">OnePixel • made by eggdog  ♡</string>
 </resources>

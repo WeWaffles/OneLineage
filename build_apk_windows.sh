@@ -41,14 +41,14 @@ echo "=== 4. Compiling Java sources ==="
 "$JAVA_HOME/bin/javac" -source 1.8 -target 1.8 -nowarn \
     -cp "$PLATFORM_JAR" \
     -d "$BUILD_DIR/classes" \
-    src/com/wewaffles/onelineage/MainActivity.java \
-    "$BUILD_DIR/gen/com/wewaffles/onelineage/R.java"
+    src/com/eggdog/onepixel/MainActivity.java \
+    "$BUILD_DIR/gen/com/eggdog/onepixel/R.java"
 
 echo "=== 5. Generating Dalvik executable ==="
 "$SDK_TOOLS/d8.bat" \
     --lib "$PLATFORM_JAR" \
     --output "$BUILD_DIR/dex" \
-    "$BUILD_DIR/classes/com/wewaffles/onelineage"/*.class
+    "$BUILD_DIR/classes/com/eggdog/onepixel"/*.class
 
 echo "=== 6. Packaging classes.dex ==="
 (cd "$BUILD_DIR/dex" && "$JAVA_HOME/bin/jar" uf0 "$BUILD_DIR/base.apk" classes.dex)

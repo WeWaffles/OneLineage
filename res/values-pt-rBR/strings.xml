@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">OneLineage</string>
-    <string name="title_dashboard">OneLineage</string>
+    <string name="app_name">OnePixel</string>
+    <string name="title_dashboard">OnePixel</string>
     <string name="desc_dashboard">Alternador de ambientes para Galaxy S26 Ultra</string>
 
     <string name="header_subtitle_oneui">Alternador de ambiente • One UI</string>
@@ -34,7 +34,9 @@
     <string name="theme_option_violet">Violeta</string>
     <string name="theme_option_amoled">Preto AMOLED</string>
     <string name="theme_dialog_title">Escolha um tema de cores</string>
+    <string name="theme_option_system">Cores do sistema</string>
     <string-array name="theme_names">
+        <item>@string/theme_option_system</item>
         <item>@string/theme_option_lineage</item>
         <item>@string/theme_option_ocean</item>
         <item>@string/theme_option_violet</item>
@@ -53,13 +55,13 @@
     <string name="flavor_desc_vanilla">Vanilla: a opção mais leve</string>
     <string name="flavor_desc_gapps">MindTheGapps: LineageOS 23.2 com Google Play Store e Serviços.</string>
 
-    <string name="btn_download_lineage">Baixar e instalar</string>
-    <string name="btn_download_reinstall">Reinstalar imagem</string>
+    <string name="btn_download_lineage">Baixar</string>
+    <string name="btn_download_reinstall">Baixar</string>
     <string name="btn_pause_download">Pausar download</string>
     <string name="btn_resume_download">Retomar download</string>
     <string name="btn_preparing">Preparando…</string>
     <string name="btn_installing">Instalando…</string>
-    <string name="btn_delete_lineage">Excluir arquivos do LineageOS</string>
+    <string name="btn_delete_lineage">Excluir</string>
     <string name="btn_backup_launcher">Salvar layout</string>
     <string name="btn_restore_launcher">Restaurar layout</string>
 
@@ -107,7 +109,7 @@
     <string name="log_extract_complete">✓ Extração concluída → system.raw pronto!</string>
     <string name="log_local_image_found">Imagem local %1$s encontrada, usando-a em vez de baixar</string>
     <string name="log_setup_failed">Falha no download ou na configuração: %1$s</string>
-    <string name="dialog_delete_title">Excluir arquivos do LineageOS?</string>
+    <string name="dialog_delete_title">Excluir?</string>
     <string name="dialog_delete_message">Isso desmontará o contêiner, desconectará os dispositivos loop e removerá system.raw para liberar cerca de 3,5 GB. Você poderá instalar novamente.</string>
     <string name="dialog_delete_confirm">Excluir</string>
     <string name="dialog_cancel">Cancelar</string>

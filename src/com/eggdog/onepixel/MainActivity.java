@@ -1,4 +1,4 @@
-package com.wewaffles.onelineage;
+package com.eggdog.onepixel;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -23,6 +23,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.RadioButton;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 
 import java.io.BufferedReader;
@@ -67,6 +68,11 @@ public class MainActivity extends Activity {
     private Button btnBackupLauncher;
     private Button btnRestoreLauncher;
     private Button btnMenu;
+    private TextView tabHome;
+    private TextView tabSettings;
+    private TextView tvModePill;
+    private Switch swIsolation;
+    private boolean onSettingsTab = false;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -142,8 +148,8 @@ public class MainActivity extends Activity {
         downloadButtonIdleText = getString(R.string.btn_download_lineage);
 
         setupFlavorSelection();
-        selectedTheme = getSharedPreferences("onelineage", MODE_PRIVATE).getInt("color_theme", 0);
-        if (selectedTheme < 0 || selectedTheme > 3) selectedTheme = 0;
+        selectedTheme = getSharedPreferences("onelineage", MODE_PRIVATE).getInt("color_theme_v2", 0);
+        if (selectedTheme < 0 || selectedTheme > 4) selectedTheme = 0;
         applyTheme();
         extractAssets();
         checkRootAndSystem();
@@ -155,6 +161,76 @@ public class MainActivity extends Activity {
         btnBackupLauncher.setOnClickListener(v -> backupLauncher());
         btnRestoreLauncher.setOnClickListener(v -> restoreLauncher());
         btnMenu.setOnClickListener(v -> showPreferencesDrawer());
+
+        tabHome = findViewById(R.id.tab_home);
+        tabSettings = findViewById(R.id.tab_settings);
+        tvModePill = findViewById(R.id.tv_mode_pill);
+        swIsolation = findViewById(R.id.sw_isolation);
+        tabHome.setOnClickListener(v -> showTab(false));
+        tabSettings.setOnClickListener(v -> showTab(true));
+        swIsolation.setChecked(getSharedPreferences("onelineage", MODE_PRIVATE).getBoolean("isolated", true));
+        swIsolation.setOnCheckedChangeListener((b, on) -> setIsolation(on, true));
+        showTab(false);
+        updateModePill();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (onSettingsTab) showTab(false);
+        else super.onBackPressed();
+    }
+
+    private void showTab(boolean settings) {
+        onSettingsTab = settings;
+        findViewById(R.id.page_home).setVisibility(settings ? View.GONE : View.VISIBLE);
+        findViewById(R.id.page_settings).setVisibility(settings ? View.VISIBLE : View.GONE);
+        styleTabs();
+    }
+
+    private void styleTabs() {
+        if (currentPalette == null || tabHome == null) return;
+        Palette pal = currentPalette;
+        TextView on = onSettingsTab ? tabSettings : tabHome;
+        TextView off = onSettingsTab ? tabHome : tabSettings;
+        on.setTag("semantic");
+        off.setTag("semantic");
+        on.setBackground(rippleDrawable(pal.primarySurface, pal.accentRipple, 26));
+        on.setTextColor(pal.accent);
+        off.setBackground(rippleDrawable(pal.background, pal.accentRipple, 26));
+        off.setTextColor(pal.textSecondary);
+        findViewById(R.id.tab_bar).setBackgroundColor(pal.background);
+    }
+
+    private void updateModePill() {
+        if (tvModePill == null || currentPalette == null) return;
+        boolean iso = swIsolation == null || swIsolation.isChecked();
+        tvModePill.setTag("semantic");
+        tvModePill.setText(iso ? R.string.pill_isolated : R.string.pill_shared);
+        int fg = iso ? currentPalette.accent : currentPalette.error;
+        int bg = iso ? currentPalette.primarySurface : currentPalette.errorSurface;
+        tvModePill.setTextColor(fg);
+        if (swIsolation != null) {
+            swIsolation.setThumbTintList(ColorStateList.valueOf(iso ? currentPalette.accent : currentPalette.textTertiary));
+            swIsolation.setTrackTintList(ColorStateList.valueOf(iso ? currentPalette.primarySurface : currentPalette.raisedSurface));
+        }
+    }
+
+    /** Isolated mode is on unless the guest finds data/local/tmp/ol_shared in the stage. */
+    private void setIsolation(boolean on, boolean log) {
+        getSharedPreferences("onelineage", MODE_PRIVATE).edit().putBoolean("isolated", on).apply();
+        updateModePill();
+        if (log) appendLog(getString(on ? R.string.isolation_on_log : R.string.isolation_off_log));
+        executor.execute(() -> applyIsolationFlag(on));
+    }
+
+    private void applyIsolationFlag(boolean on) {
+        String flag = STAGE_DIR + "/data/local/tmp/ol_shared";
+        String cmd = on ? "rm -f " + flag
+                : "mkdir -p " + STAGE_DIR + "/data/local/tmp && touch " + flag;
+        try {
+            Runtime.getRuntime().exec(new String[]{suBinary, "-c", cmd}).waitFor();
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
@@ -202,10 +278,6 @@ public class MainActivity extends Activity {
 
         TextView title = drawerText(getString(R.string.settings_title), 24, palette.textPrimary, true);
         panel.addView(title, drawerParams(-1, -2));
-        TextView subtitle = drawerText(getString(R.string.settings_subtitle), 14, palette.textSecondary, false);
-        LinearLayout.LayoutParams subtitleParams = drawerParams(-1, -2);
-        subtitleParams.topMargin = dp(4);
-        panel.addView(subtitle, subtitleParams);
 
         ScrollView content = new ScrollView(this);
         content.setFillViewport(false);
@@ -227,10 +299,10 @@ public class MainActivity extends Activity {
         for (int i = 0; i < themeNames.length; i++) {
             final int themeIndex = i;
             addDrawerChoice(choices, themeNames[i], selectedTheme == i,
-                    Palette.forTheme(i).accent, palette, () -> {
+                    Palette.forTheme(i, this).accent, palette, () -> {
                         selectedTheme = themeIndex;
                         getSharedPreferences("onelineage", MODE_PRIVATE).edit()
-                                .putInt("color_theme", selectedTheme).apply();
+                                .putInt("color_theme_v2", selectedTheme).apply();
                         applyTheme();
                         dialog.dismiss();
                         showPreferencesDrawer();
@@ -357,7 +429,7 @@ public class MainActivity extends Activity {
     }
 
     private void applyTheme() {
-        currentPalette = Palette.forTheme(selectedTheme);
+        currentPalette = Palette.forTheme(selectedTheme, this);
         Palette palette = currentPalette;
 
         findViewById(R.id.root_scroll_view).setBackgroundColor(palette.background);
@@ -366,7 +438,8 @@ public class MainActivity extends Activity {
 
         int[] cardIds = {
                 R.id.card_system_status, R.id.card_switch_actions,
-                R.id.card_image_management, R.id.card_launcher_safety, R.id.card_operation_log
+                R.id.card_image_management, R.id.card_launcher_safety, R.id.card_operation_log,
+                R.id.card_isolation, R.id.card_appearance
         };
         for (int id : cardIds) {
             View card = findViewById(id);
@@ -386,6 +459,10 @@ public class MainActivity extends Activity {
         pbDownload.setIndeterminateTintList(ColorStateList.valueOf(palette.accent));
         applyTextPalette(findViewById(R.id.root_scroll_view), palette);
         applyFlavorCardTheme();
+        View hero = findViewById(R.id.card_switch_actions);
+        if (hero != null) hero.setBackground(roundDrawable(palette.primarySurface, Color.TRANSPARENT, 32));
+        styleTabs();
+        updateModePill();
     }
 
     private void applyTextPalette(View view, Palette palette) {
@@ -484,8 +561,32 @@ public class MainActivity extends Activity {
             this.logText = Color.parseColor(logText);
         }
 
-        static Palette forTheme(int theme) {
-            switch (theme) {
+        private static String hex(android.content.Context c, int id) {
+            return String.format("#%06X", c.getColor(id) & 0xFFFFFF);
+        }
+
+        /** Theme 0 follows the system's Material You colors (Android 12+). */
+        static Palette forTheme(int theme, android.content.Context c) {
+            if (theme == 0) {
+                if (Build.VERSION.SDK_INT < 31) return forTheme(1, c);
+                return new Palette(
+                        hex(c, android.R.color.system_neutral1_900),
+                        hex(c, android.R.color.system_neutral2_800),
+                        hex(c, android.R.color.system_neutral2_700),
+                        hex(c, android.R.color.system_accent1_200),
+                        hex(c, android.R.color.system_accent1_800),
+                        hex(c, android.R.color.system_accent1_700),
+                        hex(c, android.R.color.system_accent1_200),
+                        hex(c, android.R.color.system_accent1_600),
+                        hex(c, android.R.color.system_neutral1_50),
+                        hex(c, android.R.color.system_neutral2_200),
+                        hex(c, android.R.color.system_neutral2_400),
+                        "#FFB4AB", "#411215",
+                        hex(c, android.R.color.system_neutral2_600),
+                        hex(c, android.R.color.system_neutral1_1000),
+                        hex(c, android.R.color.system_neutral1_100));
+            }
+            switch (theme - 1) {
                 case 1:
                     return new Palette("#071820", "#0D2630", "#143641", "#83E7E8",
                             "#00363B", "#0B4850", "#83E7E8", "#386D72", "#E1F7F7",
@@ -666,7 +767,7 @@ public class MainActivity extends Activity {
             String[] assets = {
                 "switch_to_lineage.sh", "return_to_oneui.sh",
                 "master_prepare.sh", "master_inner.sh",
-                "zygote_exec", "clean_apex_info_list.xml",
+                "zygote_exec", "ol_bridge", "clean_apex_info_list.xml",
                 "services_patched.jar",
                 "7zz", "PermissionController_patched.apk"
             };
@@ -700,7 +801,7 @@ public class MainActivity extends Activity {
                         "  cp -f \"$f\" \"" + STAGE_DIR + "/$base\"; " +
                         "done && " +
                         "cp -f " + filesDir.getAbsolutePath() + "/7zz /data/local/tmp/7zz 2>/dev/null; " +
-                        "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/7zz /data/local/tmp/7zz 2>/dev/null"
+                        "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/ol_bridge " + STAGE_DIR + "/7zz /data/local/tmp/7zz 2>/dev/null"
                     }).waitFor();
                 } catch (Exception ignored) {}
             }
@@ -1081,8 +1182,9 @@ public class MainActivity extends Activity {
                                  "  base=$(basename \"$f\"); " +
                                  "  cp -f \"$f\" \"" + STAGE_DIR + "/$base\"; " +
                                  "done && " +
-                                 "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/7zz";
+                                 "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/ol_bridge " + STAGE_DIR + "/7zz";
                 Runtime.getRuntime().exec(new String[]{suBinary, "-c", syncCmd}).waitFor();
+                applyIsolationFlag(getSharedPreferences("onelineage", MODE_PRIVATE).getBoolean("isolated", true));
 
                 String stageScript = STAGE_DIR + "/switch_to_lineage.sh";
                 String cmd = "stageScript=" + STAGE_DIR + "/switch_to_lineage.sh; " +
