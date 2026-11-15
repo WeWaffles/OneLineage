@@ -28,7 +28,7 @@ kill -9 $(pidof surfaceflinger) 2>/dev/null || true
 # Put the host's own /data trees back FIRST: master_prepare.sh bridges the
 # staged app trees (installd/artd write there), and the One UI launcher restore
 # below must read the host's real /data/user/0, not the guest's.
-for d in app app-staging user user_de dalvik-cache misc/profiles; do
+for d in app app-staging user user_de dalvik-cache misc/profiles data; do
     umount "/data/$d" 2>/dev/null || true
 done
 

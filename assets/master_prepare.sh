@@ -450,10 +450,19 @@ echo "=== 5d. Bridging host /data app trees into the staged /data ==="
 # equivalents over those host paths for the duration of the session, so those
 # daemons write into the guest's data. One UI is not running meanwhile and
 # return_to_oneui.sh removes the binds again.
-for d in app app-staging user user_de dalvik-cache misc/profiles; do
-    mkdir -p "$STAGE/data/$d" 2>/dev/null || true
+#
+# installd writes user 0's CE dirs to /data/data/<pkg>, not /data/user/0/<pkg>
+# (on a normal device one is a symlink to the other). Without the data entry
+# below, apps installed in Lineage got their CE dir in One UI's /data/data,
+# PMS recorded that dir's inode, and zygote could not find it in the guest
+# ("Unable to find <pkg>:<inode> in /data_mirror/data_ce/null/0"): the app ran
+# with no data dir and closed at once (Firefox, banking apps).
+for d in app app-staging user user_de dalvik-cache misc/profiles data; do
+    src="$STAGE/data/$d"
+    [ "$d" = data ] && src="$STAGE/data/user/0"
+    mkdir -p "$src" 2>/dev/null || true
     if [ -d "/data/$d" ] && ! mount | grep -q " /data/$d "; then
-        $BB mount --bind "$STAGE/data/$d" "/data/$d" 2>/dev/null && echo "Bridged /data/$d -> $STAGE/data/$d"
+        $BB mount --bind "$src" "/data/$d" 2>/dev/null && echo "Bridged /data/$d -> $src"
     fi
 done
 
