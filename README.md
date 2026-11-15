@@ -50,14 +50,19 @@ Hot-switch between stock **One UI** and a **LineageOS 23.2 (Android 16) GSI** on
 11. **SMS.** `ims_watchdog.sh` keeps One UI's `imsd` running and `switch_to_lineage.sh` waits for voice registration before pivoting.
 12. **Boot diagnostics.** Each boot writes `/data/boot_failures.log`.
 
+## Isolated mode
+Isolated mode gives Lineage its own binder registry and its own keystore, gatekeeper and credential state, with `ol_bridge` passing One UI's hardware services in (see docs/ISOLATION.md). It keeps One UI's lock screen safe and is what the camera, Wi-Fi calling and the touch, audio and Wi-Fi fixes were tested on. It is opt-in for now: run `su -c touch /data/local/tmp/lineage_stage/data/local/tmp/ol_isolate` before switching.
+
 ## Known issues
-- Returning to One UI may still need a manual reboot.
-- The guest binds the host's `media.codec`, whose AIDL hash differs from the GSI's, which can cause high CPU during codec enumeration.
-- No IMS stack in the guest, so **voice calls don't work** (data and SMS depend on One UI's `imsd`).
+Tested on an SM-S948U (T-Mobile) in isolated mode. On other phones, expect more of these.
+- Returning to One UI needs a reboot. `return_to_oneui.sh` restores and checks One UI's lock-screen state first and says when the reboot is safe.
+- Calls work both ways, but some outgoing calls fail with "call failed". Dialing with the country code (`+1...`) may help.
+- Wi-Fi calling registers, but call audio over Wi-Fi is untested.
+- RCS chats don't work ("RCS chat status not supported"): Google's RCS provisioning turns it off for this setup.
+- NFC doesn't work (the guest has no NFC service), and Bluetooth is untested.
 - Developer options crash (the guest registers no `adb` service).
 - DTMF tones glitch, and deep-buffer audio hangs, so it stays disabled.
 - Never kill the host `netd` while Lineage is running.
-- After some minutes (or 1 minute) after lineageos started, you get throw back at one ui 8, we're fixing this as we know the root cause.
 
 ## Building
 Set `ANDROID_SDK_ROOT` (or `ANDROID_HOME`) to your Android SDK directory, install JDK 17, Android SDK build-tools 34.0.0 and the android-34 platform, then run `./build_apk.sh`. The script writes the APK to `out/OneLineage.apk` and creates a development keystore on first use. You can override `BUILD_TOOLS_VERSION`, `ANDROID_PLATFORM`, and `OUT_APK`; set `KEYSTORE`, `KEYSTORE_PASS`, `KEY_ALIAS`, and `KEY_PASS` to sign with your own keystore.
@@ -65,3 +70,6 @@ Set `ANDROID_SDK_ROOT` (or `ANDROID_HOME`) to your Android SDK directory, instal
 ## Credits
 LineageOS GSI builds by MisterZtr (SourceForge). LineageOS and Android are trademarks of their respective owners. Not affiliated with Samsung, Google or LineageOS.
 WeWaffles (creator of OneLineage)
+
+## License
+OneLineage is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attributions, including code adapted from [OneOS](https://github.com/fahadalijaved/OneOS), and for the parts of this repository that keep their own licenses.

@@ -3,10 +3,15 @@
 BACKUP_DIR="/data/local/tmp/lineage_backups"
 
 echo "=== [1/5] Terminating Container Supervision & Zygote ==="
+# Only one return may run: stop the session failsafe so killing the guest below
+# does not trigger a second return (when the failsafe itself started us, this
+# only ends its waiting shell, not this script).
+pkill -f "session_failsafe" 2>/dev/null || true
 pkill -9 -f "ctl.stop zygote" 2>/dev/null || true
 pkill -9 -f "kill -STOP" 2>/dev/null || true
 pkill -9 -f "ui_activator" 2>/dev/null || true
 pkill -9 -f "zygote_exec" 2>/dev/null || true
+pkill -9 -f "ol_bridge" 2>/dev/null || true
 # Stop the adb watchdog started by switch_to_lineage.sh before One UI's own
 # system_server comes back, so it cannot fight init over sys.usb.config.
 pkill -9 -f "adb_watchdog.sh" 2>/dev/null || true
@@ -81,6 +86,25 @@ sleep 1
 setprop ctl.start vendor.fingerprint-default-1_0 2>/dev/null || true
 setprop ctl.start vendor.biometrics.fingerprint.inscreen 2>/dev/null || true
 
+# Put One UI's lock-screen / key state back exactly as it was before the
+# switch (lock_guard.sh), and bring the host security HALs back, BEFORE One
+# UI's system_server starts and reads them.
+GUARD="/data/local/tmp/lineage_stage/lock_guard.sh"
+SAFE_TO_REBOOT=0
+if [ -f "$GUARD" ]; then
+    sh "$GUARD" unblock
+    if sh "$GUARD" restore; then
+        # Restore verified byte-for-byte against the snapshot: a reboot can no
+        # longer pick up anything the guest changed.
+        sh "$GUARD" close
+        SAFE_TO_REBOOT=1
+    else
+        echo "!!! WARNING: credential restore failed - do NOT reboot, check /data/local/tmp/lineage_lockstate/guard.log"
+    fi
+else
+    echo "!!! WARNING: lock_guard.sh missing; One UI credential state was not checked"
+fi
+
 setprop ctl.start surfaceflinger
 setprop ctl.start zygote
 setprop ctl.start audioserver
@@ -97,4 +121,12 @@ am start -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/nu
 # switch_to_lineage.sh drops SELinux to permissive for the takeover; restore it.
 setenforce 1 2>/dev/null || true
 echo "SELinux mode: $(getenforce 2>/dev/null || echo unknown)"
-echo "One UI restored successfully."
+# Restarting One UI's userspace in place is not reliable on every device, so
+# the return finishes with a manual reboot. Only say so once the credential
+# state has been verified; otherwise a reboot would load the guest's changes.
+if [ "$SAFE_TO_REBOOT" = "1" ]; then
+    echo "One UI lock-screen state verified. Reboot the phone now to finish returning to One UI."
+else
+    echo "!!! Lock-screen state NOT verified. Do NOT reboot (temp root would be lost). See /data/local/tmp/lineage_lockstate/guard.log"
+    exit 1
+fi

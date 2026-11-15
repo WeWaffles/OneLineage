@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Centered punch-hole camera, as One UI describes it. -->
+    <string name="config_mainBuiltInDisplayCutout" translatable="false">M 0,0 H -10.66666666666667 V 37.06666666666667 H 10.66666666666667 V 0 H 0 Z @dp</string>
+    <string name="config_mainBuiltInDisplayCutoutRectApproximation" translatable="false">@string/config_mainBuiltInDisplayCutout</string>
+    <dimen name="rounded_corner_radius">28dp</dimen>
+    <dimen name="rounded_corner_radius_top">28dp</dimen>
+    <dimen name="rounded_corner_radius_bottom">28dp</dimen>
+    <!-- Keeps the clock and the battery the same distance from their corners
+         (the privacy-dot side otherwise gets 20dp and the clock side none). -->
+    <dimen name="rounded_corner_content_padding">20dp</dimen>
+</resources>
