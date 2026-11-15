@@ -28,6 +28,7 @@
     <string name="language_title">App language</string>
     <string name="language_english">English</string>
     <string name="language_portuguese_brazil">Português (Brasil)</string>
+    <string name="language_chinese">中文（简体）</string>
     <string name="theme_title">Color theme</string>
     <string name="theme_option_lineage">Lineage Blue</string>
     <string name="theme_option_ocean">Ocean</string>
