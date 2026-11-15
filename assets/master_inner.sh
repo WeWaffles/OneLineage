@@ -47,6 +47,24 @@ mkdir -p /mnt/user/0
 $BB mount -t tmpfs tmpfs /mnt/user/0 2>/dev/null || true
 mkdir -p /mnt/user/0/emulated
 $BB mount --bind /data/media/0 /mnt/user/0/emulated 2>/dev/null || true
+# Apps get /storage from /mnt/installer/0 (installers like the Play Store) or
+# /mnt/androidwritable/0, not /mnt/user/0. The /mnt tree is a copy of One
+# UI's, so those two still held One UI's FUSE mounts, which go dead with its
+# MediaProvider: installers saw no shared storage and the Play Store refused
+# every install with "not enough storage" (its status 1047). Do what init.rc
+# does on a normal boot: /mnt/installer and /mnt/androidwritable as slave
+# binds of /mnt/user, so the guest vold's FUSE mount at /mnt/user/0/emulated
+# reaches both and every app namespace forked later. (From the Lineage
+# branch, aafc59d.)
+$BB mount --make-shared /mnt 2>/dev/null || true
+for d in installer androidwritable; do
+    mkdir -p /mnt/$d
+    if $BB mount --bind /mnt/user /mnt/$d 2>/dev/null && $BB mount --make-slave /mnt/$d 2>/dev/null; then
+        echo "[Pivoted Root] /mnt/$d follows /mnt/user"
+    else
+        echo "[Pivoted Root] WARN: could not link /mnt/$d to /mnt/user"
+    fi
+done
 
 echo "[Pivoted Root] Rootfs successfully activated as /"
 echo "[Pivoted Root] Testing /dev/null resolution:"
@@ -99,7 +117,11 @@ if [ ! -f /data/local/tmp/ol_shared ] && [ -x /data/ol_bridge ]; then
             echo "[Pivoted Root] Bridge ready: $(grep 'sync:' /data/ol_bridge.log | tail -n 1)"
             # Lineage's own security daemons; their state stays in this /data.
             mkdir -p /data/misc/keystore /data/misc/gatekeeper /data/misc/credstore
-            /system/bin/keystore2 /data/misc/keystore > /data/ol_keystore2.log 2>&1 &
+            # As the keystore uid, like init would: PackageManager's attestation
+            # app-id provider only answers uid 1017, and without it every
+            # attested key (Play Integrity, Finsky) fails to generate.
+            chown -R 1017:1017 /data/misc/keystore
+            $BB setuidgid keystore /system/bin/keystore2 /data/misc/keystore > /data/ol_keystore2.log 2>&1 &
             /system/bin/gatekeeperd /data/misc/gatekeeper > /data/ol_gatekeeperd.log 2>&1 &
             [ -x /system/bin/credstore ] && /system/bin/credstore /data/misc/credstore > /data/ol_credstore.log 2>&1 &
             # Guest installd: PackageManager needs one, and the host's is never
