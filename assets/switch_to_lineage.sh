@@ -32,6 +32,15 @@ echo "=== LINEAGEOS 23.2 TAKEOVER STARTING ==="
 # return_to_oneui.sh restores enforcing.
 setenforce 0 2>/dev/null || true
 echo "SELinux mode: $(getenforce 2>/dev/null || echo unknown)"
+# Everything below needs full root (permissive SELinux, ctl.* properties,
+# mounts). A restricted su (e.g. a KernelSU app profile without full
+# capabilities) gets part-way - including bind mounts over the live One UI -
+# before failing, so refuse to start at all in that case.
+if [ "$(getenforce 2>/dev/null)" != "Permissive" ]; then
+    echo "ERROR: could not switch SELinux to permissive. su does not have full root."
+    echo "In KernelSU, give the app (and Shell, if using adb) the default full-root profile."
+    exit 1
+fi
 
 # --- IMS / SMS REGISTRATION GATE -----------------------------------------
 # The guest has no ImsService of its own, so the modem's IMS registration is
@@ -130,8 +139,19 @@ if ! ps -ef 2>/dev/null | grep -v grep | grep -q "ims_watchdog.sh"; then
     cat > /data/local/tmp/ims_watchdog.sh <<'IMSW'
 #!/system/bin/sh
 LOG=/data/local/tmp/ims_watchdog.log
+n=0
 while true; do
-    sleep 60
+    sleep 2
+    # Turning Wi-Fi off in Lineage terminates the host's wpa_supplicant, and
+    # the guest cannot start a host service again, so Wi-Fi would stay off
+    # ("ClientModeManager start failed"). Keep it running; an idle
+    # supplicant is harmless while Wi-Fi is off.
+    if [ "$(getprop init.svc.wpa_supplicant)" = "stopped" ]; then
+        setprop ctl.start wpa_supplicant 2>/dev/null
+        echo "$(date) restarted wpa_supplicant (Wi-Fi was turned off)" >> "$LOG"
+    fi
+    n=$((n + 1))
+    [ $((n % 30)) -eq 0 ] || continue
     if ! pidof imsd >/dev/null 2>&1; then
         setprop ctl.start imsd 2>/dev/null
         echo "$(date) restarted imsd (was missing)" >> "$LOG"
@@ -147,12 +167,47 @@ IMSW
     echo "imsd keepalive started (log: /data/local/tmp/ims_watchdog.log)"
 fi
 
+# Touch recorder. The touchscreen sometimes stops responding in Lineage, and the
+# kernel log is gone after the restart that follows. Stream the touch driver's
+# kernel lines (power key, screen-off gestures, mode changes; normal touches
+# log nothing, so this is cheap) into /data/local/tmp/ol_touch.log, which
+# survives a reboot. The previous session's log is kept as .prev.
+if ! ps -ef 2>/dev/null | grep -v grep | grep -q "ol_touch_rec.sh"; then
+    cat > /data/local/tmp/ol_touch_rec.sh <<'TOUCHREC'
+#!/system/bin/sh
+LOG=/data/local/tmp/ol_touch.log
+[ -f "$LOG" ] && mv -f "$LOG" "$LOG.prev"
+echo "=== $(date) Lineage session start" > "$LOG"
+dmesg -w 2>/dev/null | grep --line-buffered -iE "sec_input|synaptics|sec tsp|input_dev|drm.*(panel|power)" | while read -r line; do
+    echo "$(date +%T) $line" >> "$LOG"
+    # Cap the size (keep the newest half).
+    if [ "$(stat -c %s "$LOG" 2>/dev/null || echo 0)" -gt 2000000 ]; then
+        tail -c 1000000 "$LOG" > "$LOG.tmp" && mv -f "$LOG.tmp" "$LOG"
+    fi
+done
+TOUCHREC
+    chmod 755 /data/local/tmp/ol_touch_rec.sh
+    if command -v setsid >/dev/null 2>&1; then
+        setsid /system/bin/sh /data/local/tmp/ol_touch_rec.sh </dev/null >/dev/null 2>&1 &
+    else
+        nohup /system/bin/sh /data/local/tmp/ol_touch_rec.sh </dev/null >/dev/null 2>&1 &
+    fi
+    echo "touch recorder started (log: /data/local/tmp/ol_touch.log)"
+fi
+
 # Set permissive privapp permissions to avoid Signature|privileged fatal exceptions
 set_prop ro.control_privapp_permissions log
 
 # --- ONEUI PROTECTION & RESCUEPARTY DISABLE ---
 echo "=== [1/6] Protecting OneUI Home Screen and Disabling RescueParty ==="
-set_prop persist.sys.disable_rescue true
+# Memory only: resetprop without -p never writes /data/property, so One UI
+# never inherits this after a reboot. Plain setprop WOULD persist it, so skip
+# it when resetprop is missing instead of falling back.
+if [ -n "$RP" ] && [ -x "$RP" ]; then
+    "$RP" persist.sys.disable_rescue true 2>/dev/null || true
+else
+    echo "NOTE: resetprop not found; leaving persist.sys.disable_rescue untouched (rescue_boot_count suppressor still runs)."
+fi
 set_prop sys.rescue_boot_count 0
 # Periodically reset the rescue boot counter. Samsung's init increments it on
 # every zygote crash, and RescueParty triggers a factory-reset prompt (or an
@@ -161,6 +216,7 @@ set_prop sys.rescue_boot_count 0
 # counter accumulates and fires RescueParty mid-session.
 if ! ps -ef 2>/dev/null | grep -v grep | grep -q "rescue_boot_suppress"; then
     nohup $BB sh -c "
+# rescue_boot_suppress
 while true; do
     setprop sys.rescue_boot_count 0 2>/dev/null
     sleep 15
@@ -220,7 +276,68 @@ fi
 echo "=== [6/6] Launching LineageOS Takeover Daemon ==="
 pkill -f "while true; do [ \"\$(getprop init.svc.zygote)\"" 2>/dev/null || true
 pkill -f "while true; do for p in \\\$(pidof audioserver cameraserver)" 2>/dev/null || true
+# Record whether One UI is up and fully booted before we stop it: lock_guard
+# uses this to decide whether the current state is a known-good snapshot.
+ONEUI_HEALTHY=0
+if [ "$(getprop sys.boot_completed)" = "1" ] && pidof system_server >/dev/null 2>&1; then
+    ONEUI_HEALTHY=1
+fi
+export ONEUI_HEALTHY
+# Clear One UI's networks from the host netd, and their DNS resolver caches,
+# while One UI's system_server is still up. The guest's ConnectivityService
+# programs this same netd and numbers its networks from 100 like One UI did.
+# A stale resolver cache makes its createNetworkCache fail with "File exists",
+# the network is then treated as failed and never becomes the validated
+# default (no Wi-Fi, apps report no network; IMS never connects). This must
+# run before system_server stops: after that netd stops answering (it waits
+# on a framework service) until the guest's system_server is up. Every call
+# is time-limited anyway. netd's built-in networks (99 and below) stay.
+ids=$(timeout 12 dumpsys netd 2>/dev/null | awk '$2 == "PHYSICAL" || $2 == "VIRTUAL" { if ($1 ~ /^[0-9]+$/) print $1 }')
+cleared=""
+for id in $ids; do
+    [ "$id" -ge 100 ] 2>/dev/null && timeout 3 ndc network destroy "$id" >/dev/null 2>&1 && cleared="$cleared $id"
+done
+# IDnsResolver transaction 9 = destroyNetworkCache(netId); a no-op for a
+# netId with no cache.
+for id in $ids $(seq 100 119); do
+    [ "$id" -ge 100 ] 2>/dev/null && timeout 3 service call dnsresolver 9 i32 "$id" >/dev/null 2>&1
+done
+echo "netd: cleared One UI networks:${cleared:- none} (and DNS caches)"
 setprop ctl.stop zygote
+
+# Protect One UI's lock-screen / key state before the guest can touch it (see
+# lock_guard.sh). Snapshot it now that One UI's system_server is down, and
+# refuse to continue without a good snapshot.
+sleep 2
+if ! sh "$STAGE/lock_guard.sh" backup; then
+    echo "ERROR: could not back up One UI credential state; aborting the switch."
+    setprop ctl.start zygote
+    setenforce 1 2>/dev/null || true
+    exit 1
+fi
+sh "$STAGE/lock_guard.sh" block
+sh "$STAGE/lock_guard.sh" unhook
+
+# Fence off One UI's Weaver slots from the guest (see lock_guard.sh reserve).
+# The guest's /metadata is the GSI's empty dir, so a private slot_map is bound
+# over it; the host's real /metadata is never touched. No fence, no switch.
+GUEST_META="$STAGE/guest_metadata"
+mkdir -p "$GUEST_META/password_slots"
+chown 1000:1000 "$GUEST_META/password_slots" 2>/dev/null
+chmod 700 "$GUEST_META/password_slots"
+if ! sh "$STAGE/lock_guard.sh" reserve "$GUEST_META/password_slots/slot_map" \
+   || ! { $BB umount -l "$STAGE/rootfs/metadata" 2>/dev/null; mkdir -p "$STAGE/rootfs/metadata" 2>/dev/null; $BB mount --bind "$GUEST_META" "$STAGE/rootfs/metadata"; } \
+   || [ ! -s "$STAGE/rootfs/metadata/password_slots/slot_map" ]; then
+    echo "ERROR: could not protect One UI's Weaver slots; aborting the switch."
+    sh "$STAGE/lock_guard.sh" unhook
+    rm -f /data/local/tmp/lineage_lockstate/session_active
+    setprop ctl.start zygote
+    setenforce 1 2>/dev/null || true
+    exit 1
+fi
+echo "Weaver slots fenced for the guest."
+echo "NOTE: do not set a screen lock / PIN inside LineageOS: it shares this phone's lock-screen hardware (Weaver) with One UI."
+
 setprop ctl.stop surfaceflinger
 # audioserver/cameraserver are deliberately left running. The guest shares this
 # binder namespace, and its AudioService.<init> -> AudioDeviceBroker.init ->
@@ -270,6 +387,7 @@ kill -9 $(pidof media.codec) $(pidof media.metrics) 2>/dev/null || true
 # daemon that immediately kills any media.codec that init brings back.
 if ! ps -ef 2>/dev/null | grep -v grep | grep -q "media_codec_suppress"; then
     nohup $BB sh -c "
+# media_codec_suppress
 while true; do
     sleep 3
     if pidof media.codec >/dev/null 2>&1; then
@@ -284,6 +402,12 @@ done
 " </dev/null >/dev/null 2>&1 &
     echo "media.codec suppressor started"
 fi
+
+# The IMediaCodecList AIDL mismatch makes system_server/SystemUI/mediaserver log
+# AString/Parcel warnings millions of times, which pins logd at ~100% CPU.
+for t in AString libbinder.Parcel MediaCodecList AidlConversionCppNdk; do
+    setprop log.tag.$t S 2>/dev/null || true
+done
 
 # Same handover for wifi. The guest's WifiService binds IWificond (service
 # "wifinl80211") and drives the vendor HAL through it. Samsung's wificond is
@@ -304,11 +428,43 @@ cp -f "$STAGE/master_inner.sh" "$STAGE/data/master_inner.sh"
 chmod 755 "$STAGE/data/master_inner.sh"
 cp -f "$STAGE/zygote_exec" "$STAGE/data/zygote_exec"
 chmod 755 "$STAGE/data/zygote_exec"
+if [ -f "$STAGE/ol_bridge" ]; then
+    cp -f "$STAGE/ol_bridge" "$STAGE/data/ol_bridge"
+    chmod 755 "$STAGE/data/ol_bridge"
+    # On-demand host services (init "interface aidl" lines): the bridge gives
+    # Lineage placeholders that start them on first use (e.g. apexservice).
+    cat /system/etc/init/*.rc /system_ext/etc/init/*.rc /product/etc/init/*.rc \
+        /vendor/etc/init/*.rc /odm/etc/init/*.rc 2>/dev/null \
+        | sed -n 's/^[[:space:]]*interface aidl \([^[:space:]]*\).*/\1/p' | sort -u \
+        > "$STAGE/data/ol_lazy_services.txt"
+fi
 
 # Launch takeover inside isolated mount namespace
 $BB unshare -m $BB sh "$STAGE/data/master_inner.sh" </dev/null >"$STAGE/data/takeover.log" 2>&1 &
 TAKEOVER_PID=$!
 echo "Takeover daemon PID: $TAKEOVER_PID"
+
+# Session failsafe. If the guest dies on its own (zygote/system_server crash),
+# nothing used to bring One UI back properly: the host zygote stayed
+# suppressed, or came back WITHOUT lock_guard restoring the credential state.
+# Run the full, guarded return path instead.
+nohup $BB sh -c "
+# session_failsafe
+while kill -0 $TAKEOVER_PID 2>/dev/null; do sleep 3; done
+[ -f /data/local/tmp/lineage_lockstate/session_active ] || exit 0
+# Restarting One UI in place does not work on every device and crash-loops
+# its system_server into Safe Mode. Only restore and verify the lock state,
+# then do a clean reboot (the normal way back to One UI).
+echo \"\$(date '+%F %T') guest exited; restoring lock state, then rebooting\" >> /data/local/tmp/lineage_lockstate/guard.log
+pkill -9 -f ol_bridge 2>/dev/null
+if sh \"$STAGE/lock_guard.sh\" restore >> /data/local/tmp/lineage_lockstate/failsafe_return.log 2>&1; then
+    sh \"$STAGE/lock_guard.sh\" close
+    sync
+    reboot
+else
+    echo \"\$(date '+%F %T') !!! restore NOT verified; not rebooting\" >> /data/local/tmp/lineage_lockstate/guard.log
+fi
+" </dev/null >/dev/null 2>&1 &
 
 # Start UI Activator daemon
 $BB sh -c "

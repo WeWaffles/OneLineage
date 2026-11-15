@@ -665,20 +665,42 @@ public class MainActivity extends Activity {
         });
     }
 
+    /** Size of a bundled asset, or -1 if it cannot be read. */
+    private long assetLength(String asset) {
+        try (android.content.res.AssetFileDescriptor fd = getAssets().openFd(asset)) {
+            return fd.getLength();  // stored (uncompressed) assets, e.g. .jar
+        } catch (Exception ignored) {
+        }
+        try (InputStream in = getAssets().open(asset)) {
+            long n = 0;
+            byte[] buffer = new byte[32768];
+            int read;
+            while ((read = in.read(buffer)) != -1) n += read;
+            return n;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
     private void extractAssets() {
         executor.execute(() -> {
             String[] assets = {
-                "switch_to_lineage.sh", "return_to_oneui.sh",
+                "switch_to_lineage.sh", "return_to_oneui.sh", "lock_guard.sh",
                 "master_prepare.sh", "master_inner.sh",
-                "zygote_exec", "clean_apex_info_list.xml",
+                "zygote_exec", "ol_bridge", "clean_apex_info_list.xml",
                 "services_patched.jar", "framework_patched.jar",
-                "7zz", "PermissionController_patched.apk"
+                "7zz", "PermissionController_patched.apk",
+                "OneLineageKnoxStub.apk", "ol_audioparam.dex",
+                "OneLineageDisplayOverlay.apk",
+                "libaudioclient_aidl_conversion_patched.so",
+                "libaudio_aidl_conversion_common_cpp_patched.so"
             };
             File filesDir = getFilesDir();
             for (String asset : assets) {
                 File target = new File(filesDir, asset);
-                if (target.exists() && target.length() > 0 && asset.endsWith(".jar")) {
-                    continue; // Skip re-extracting large jars if already present
+                if (target.exists() && target.length() > 0 && asset.endsWith(".jar")
+                        && target.length() == assetLength(asset)) {
+                    continue; // Skip re-extracting large jars that are unchanged
                 }
                 try (InputStream in = getAssets().open(asset);
                      OutputStream out = new FileOutputStream(target)) {
@@ -703,7 +725,7 @@ public class MainActivity extends Activity {
                         "  cp -f \"$f\" \"" + STAGE_DIR + "/$base\"; " +
                         "done && " +
                         "cp -f " + filesDir.getAbsolutePath() + "/7zz /data/local/tmp/7zz 2>/dev/null; " +
-                        "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/7zz /data/local/tmp/7zz 2>/dev/null"
+                        "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/ol_bridge " + STAGE_DIR + "/7zz /data/local/tmp/7zz 2>/dev/null"
                     }).waitFor();
                 } catch (Exception ignored) {}
             }
@@ -1062,7 +1084,7 @@ public class MainActivity extends Activity {
                                  "  base=$(basename \"$f\"); " +
                                  "  cp -f \"$f\" \"" + STAGE_DIR + "/$base\"; " +
                                  "done && " +
-                                 "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/7zz";
+                                 "chmod 755 " + STAGE_DIR + "/*.sh " + STAGE_DIR + "/zygote_exec " + STAGE_DIR + "/ol_bridge " + STAGE_DIR + "/7zz";
                 Runtime.getRuntime().exec(new String[]{suBinary, "-c", syncCmd}).waitFor();
 
                 String stageScript = STAGE_DIR + "/switch_to_lineage.sh";

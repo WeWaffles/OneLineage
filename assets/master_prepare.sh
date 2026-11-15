@@ -75,6 +75,148 @@ mount | grep -q "$ROOTFS/linkerconfig " || $BB mount --rbind /linkerconfig "$ROO
 mount | grep -q "$ROOTFS/vendor " || $BB mount --bind /vendor "$ROOTFS/vendor"
 mount | grep -q "$ROOTFS/odm " || $BB mount --bind /odm "$ROOTFS/odm"
 mount | grep -q "$ROOTFS/vendor_dlkm " || $BB mount --bind /vendor_dlkm "$ROOTFS/vendor_dlkm"
+
+# --- Samsung's IMS app in the guest (VoLTE, SMS over IMS) -------------------
+# T-Mobile and other VoLTE-only carriers refuse both calls and texts without
+# IMS ("SMS over NAS is not supported"), and on a Samsung phone IMS is the One
+# UI system app com.sec.imsservice, which dies with One UI's framework. Copy
+# THIS phone's copy (never a bundled one) into a read-only overlay on the
+# guest's system_ext, so Lineage sees /system_ext/priv-app/OneLineageSecIms.
+# services_patched.jar admits it into android.uid.system from that path only
+# (tools/patches/sec_ims_signature.py); One UI's framework.jar is offered as
+# the optional library "secimshttpclient" so the app finds its Samsung
+# classes. Approach from OneOS (docs/SAMSUNG_IMS.md). Opt out with
+# $STAGE/data/local/tmp/ol_no_secims. Must run before the binds below that
+# land inside system_ext.
+# Helper the guest uses to tell the audio HAL which SIM a call is on (see the
+# call-audio step after boot and tools/audioparam).
+if [ -f "$STAGE/ol_audioparam.dex" ]; then
+    cp -f "$STAGE/ol_audioparam.dex" "$STAGE/data/local/tmp/ol_audioparam.dex"
+    chmod 644 "$STAGE/data/local/tmp/ol_audioparam.dex"
+fi
+
+# This phone's real screen shape (camera hole, rounded corners) for the
+# guest's framework, so SystemUI lays the status bar out around them (see
+# tools/display_overlay). Overlays are scanned at boot, so it must be in place
+# before the guest starts. The GSI image is read-only, so this is the same
+# trick as the IMS staging below: a tiny tmpfs layer over product/overlay
+# holding an empty placeholder, with the real APK bound onto it.
+DISP_APK="$STAGE/OneLineageDisplayOverlay.apk"
+DISP_DIR="$ROOTFS/system/product/overlay"
+if [ ! -f "$DISP_APK" ] || [ ! -d "$DISP_DIR" ]; then
+    echo "Display overlay: off (no APK)"
+elif mount | grep -q " $DISP_DIR type overlay"; then
+    echo "Display overlay: already mounted"
+else
+    chmod 644 "$DISP_APK"
+    chcon u:object_r:system_file:s0 "$DISP_APK" 2>/dev/null || true
+    DLAYER="$STAGE/display_layer"
+    mkdir -p "$DLAYER"
+    $BB umount -l "$DLAYER" 2>/dev/null || true
+    $BB mount -t tmpfs -o size=1m,mode=755 tmpfs "$DLAYER"
+    mkdir -p "$DLAYER/OneLineageDisplay"
+    touch "$DLAYER/OneLineageDisplay/OneLineageDisplayOverlay.apk"
+    chmod -R a+rX "$DLAYER"
+    chcon -R u:object_r:system_file:s0 "$DLAYER" 2>/dev/null || true
+    if $BB mount -t overlay overlay -o "lowerdir=$DLAYER:$DISP_DIR" "$DISP_DIR" &&
+       $BB mount --bind "$DISP_APK" "$DISP_DIR/OneLineageDisplay/OneLineageDisplayOverlay.apk"; then
+        echo "Display overlay: staged"
+    else
+        echo "Display overlay: off (mount failed)"
+        $BB umount -l "$DISP_DIR" 2>/dev/null || true
+    fi
+fi
+
+SECIMS="$STAGE/secims"
+SECIMS_APP="$SECIMS/priv-app/OneLineageSecIms"
+rm -f "$STAGE/data/local/tmp/ol_secims_staged"
+if [ -f "$STAGE/data/local/tmp/ol_no_secims" ]; then
+    echo "Samsung IMS in the guest: off (ol_no_secims)"
+elif mount | grep -q " $ROOTFS/system/system_ext type overlay"; then
+    echo "Samsung IMS in the guest: overlay already mounted"
+    touch "$STAGE/data/local/tmp/ol_secims_staged"
+elif [ ! -f /system/priv-app/imsservice/imsservice.apk ] || [ ! -f /system/lib64/libsec-ims.so ]; then
+    echo "Samsung IMS in the guest: off (One UI has no imsservice)"
+else
+    rm -rf "$SECIMS"
+    mkdir -p "$SECIMS_APP/lib/arm64" "$SECIMS/framework" "$SECIMS/etc/permissions"
+    if cp /system/priv-app/imsservice/imsservice.apk "$SECIMS_APP/OneLineageSecIms.apk" &&
+       cp /system/lib64/libsec-ims.so /system/lib64/libresampler_ims.so /system/lib64/libaresdns.so "$SECIMS_APP/lib/arm64/" &&
+       cp /system/framework/imsmanager.jar /system/framework/rcsopenapi.jar "$SECIMS/framework/" &&
+       cp /system/framework/framework.jar "$SECIMS/framework/ol-secims-compat.jar" &&
+       cp /system/etc/permissions/privapp-permissions-com.sec.imsservice.xml "$SECIMS/etc/permissions/"; then
+        # Stand-in Knox providers (tools/knox_stub): the IMS app registers
+        # observers on com.sec.knox.provider2 at startup and dies without it.
+        if [ -f "$STAGE/OneLineageKnoxStub.apk" ]; then
+            mkdir -p "$SECIMS/app/OneLineageKnoxStub"
+            cp "$STAGE/OneLineageKnoxStub.apk" "$SECIMS/app/OneLineageKnoxStub/"
+        fi
+        # Samsung's EngineeringModeManager (in the compat jar) loads this JNI
+        # library; One UI's own public.libraries list makes it loadable from
+        # any class loader. Without it the app dies at start.
+        if [ -f /system/lib64/lib.engmodejni.samsung.so ] && [ -f /system/etc/public.libraries-engmodejni.samsung.txt ]; then
+            mkdir -p "$SECIMS/lib64"
+            cp /system/lib64/lib.engmodejni.samsung.so "$SECIMS/lib64/"
+            cp /system/etc/public.libraries-engmodejni.samsung.txt "$SECIMS/etc/"
+        fi
+        {
+            echo '<?xml version="1.0" encoding="utf-8"?>'
+            echo '<permissions>'
+            # Each shared library gets its own class loader, so the Samsung
+            # libraries must depend on the compat jar to see its classes
+            # (imsmanager's Capabilities needs android.os.SemSystemProperties).
+            echo '    <library name="secimshttpclient" file="/system_ext/framework/ol-secims-compat.jar" />'
+            echo '    <library name="imsmanager" file="/system_ext/framework/imsmanager.jar" dependency="secimshttpclient" />'
+            echo '    <library name="rcsopenapi" file="/system_ext/framework/rcsopenapi.jar" dependency="secimshttpclient" />'
+            # Optional libraries the app declares. vsimmanager is not optional
+            # in practice: it carries the Gson the app needs at startup.
+            for lib in vsimmanager EpdgManager svemanager; do
+                if [ -f "/system/framework/$lib.jar" ] && cp "/system/framework/$lib.jar" "$SECIMS/framework/"; then
+                    echo "    <library name=\"$lib\" file=\"/system_ext/framework/$lib.jar\" dependency=\"secimshttpclient\" />"
+                fi
+            done
+            echo '</permissions>'
+        } > "$SECIMS/etc/permissions/ol-secims-libraries.xml"
+        chmod -R a+rX "$SECIMS"
+        chcon -R u:object_r:system_file:s0 "$SECIMS" 2>/dev/null || true
+        # overlayfs refuses every layer on this /data (EINVAL), so the layer
+        # is a small tmpfs: the same tree with empty placeholders for the
+        # binaries (and the real XMLs), and the binaries are then bound from
+        # $SECIMS onto the placeholders inside the merged system_ext.
+        LAYER="$STAGE/secims_layer"
+        mkdir -p "$LAYER"
+        $BB umount -l "$LAYER" 2>/dev/null || true
+        $BB mount -t tmpfs -o size=4m,mode=755 tmpfs "$LAYER"
+        (cd "$SECIMS" && find . -type d) | while read -r d; do mkdir -p "$LAYER/$d"; done
+        (cd "$SECIMS" && find . -type f) | while read -r f; do
+            case "$f" in
+                *.xml) cp "$SECIMS/$f" "$LAYER/$f" ;;
+                *) touch "$LAYER/$f" ;;
+            esac
+        done
+        chmod -R a+rX "$LAYER"
+        chcon -R u:object_r:system_file:s0 "$LAYER" 2>/dev/null || true
+        if $BB mount -t overlay overlay -o "lowerdir=$LAYER:$ROOTFS/system/system_ext" "$ROOTFS/system/system_ext"; then
+            bound=1
+            for f in $(cd "$SECIMS" && find . -type f ! -name '*.xml'); do
+                $BB mount --bind "$SECIMS/$f" "$ROOTFS/system/system_ext/$f" || bound=0
+            done
+            if [ $bound = 1 ]; then
+                touch "$STAGE/data/local/tmp/ol_secims_staged"
+                echo "Samsung IMS in the guest: staged ($(du -sk "$SECIMS" | cut -f1) KB)"
+            else
+                echo "Samsung IMS in the guest: off (binding the binaries failed)"
+                $BB umount -l "$ROOTFS/system/system_ext" 2>/dev/null || true
+            fi
+        else
+            echo "Samsung IMS in the guest: off (overlay mount failed)"
+        fi
+    else
+        echo "Samsung IMS in the guest: off (copy failed)"
+        rm -rf "$SECIMS"
+    fi
+fi
+
 # apexd is a HOST daemon: it reports the Samsung apex set (/system/apex,
 # /system_ext/apex, /vendor/apex) to the container system_server, which then
 # tries to parse those exact paths inside this namespace. Keep the apex
@@ -95,15 +237,62 @@ if [ -f "$STAGE/framework_patched.jar" ]; then
     $BB mount --bind "$STAGE/framework_patched.jar" "$ROOTFS/system/framework/framework.jar"
     echo "Bound framework_patched.jar -> $ROOTFS/system/framework/framework.jar"
 fi
-if [ -f "$STAGE/libaudio_aidl_conversion_common_cpp_patched.so" ]; then
-    $BB umount -l "$ROOTFS/system/lib64/libaudio_aidl_conversion_common_cpp.so" 2>/dev/null || true
-    $BB mount --bind "$STAGE/libaudio_aidl_conversion_common_cpp_patched.so" "$ROOTFS/system/lib64/libaudio_aidl_conversion_common_cpp.so"
-    echo "Bound libaudio_aidl_conversion_common_cpp_patched.so"
+# Audio port list fix. Samsung's audio policy reports a "Built-In 2 Mic" device
+# (AIDL device type 15, IN_MICROPHONE_MULTI) and an output flag (SUBDEVICE) that
+# stock Android doesn't know. The guest's conversion then rejects the whole port
+# list, and every app's AudioManager retries it ~10 times a second (heat, and
+# getDevices() comes back empty). These libs map the 2-mic to the built-in mic
+# and drop unknown output flag bits; see tools/audio_conv_patch. They are made
+# from one exact GSI build, so they're only bound over that build's originals.
+for pair in libaudioclient_aidl_conversion:5f2d25bc8a05a48e97e537e4acb44844 \
+            libaudio_aidl_conversion_common_cpp:c9f36f1b9634544668727ec09d40687e; do
+    lib=${pair%%:*}; want=${pair##*:}
+    dst="$ROOTFS/system/lib64/$lib.so"
+    src="$STAGE/${lib}_patched.so"
+    [ -f "$src" ] || continue
+    $BB umount -l "$dst" 2>/dev/null || true
+    have=$(md5sum "$dst" 2>/dev/null | cut -d' ' -f1)
+    if [ "$have" = "$want" ]; then
+        chmod 644 "$src"; chcon u:object_r:system_lib_file:s0 "$src" 2>/dev/null || true
+        $BB mount --bind "$src" "$dst" && echo "Bound ${lib}_patched.so"
+    else
+        echo "Audio port fix: skipped $lib.so (GSI build differs: $have)"
+    fi
+done
+# Codec-list spin fix. The guest's MediaCodecList::getInstance() asks the shared
+# "media.player" service for IMediaCodecList. On firmware where Samsung's
+# mediaserver serves that itself (no separate media.codec, e.g. S26 Ultra
+# AZCF), its reply does not match the GSI's AIDL, the list length is garbage and
+# system_server/SystemUI/mediaserver spin at 400%+ CPU (overheating). Renaming
+# the one "media.player" lookup in libstagefright (same length) makes the lookup
+# fail, and getInstance() falls back to getLocalInstance(), building the list
+# in-process from the Codec2 HAL. MediaPlayer itself uses libmedia's lookup and
+# is untouched.
+SF_SRC="$ROOTFS/system/lib64/libstagefright.so"
+SF_PATCH="$STAGE/libstagefright_patched.so"
+if [ ! -f "$SF_PATCH" ] && [ -f "$SF_SRC" ]; then
+    SF_HITS=$(grep -c -a "media\.player" "$SF_SRC" 2>/dev/null)
+    SF_OFF=$(grep -abo "media\.player" "$SF_SRC" 2>/dev/null | head -n 1 | cut -d: -f1)
+    if [ "$SF_HITS" = "1" ] && [ -n "$SF_OFF" ]; then
+        cp -f "$SF_SRC" "$SF_PATCH.tmp"
+        printf 'nolist' | dd of="$SF_PATCH.tmp" bs=1 seek=$((SF_OFF + 6)) conv=notrunc 2>/dev/null
+        if grep -q -a "media\.nolist" "$SF_PATCH.tmp" && ! grep -q -a "media\.player" "$SF_PATCH.tmp"; then
+            mv -f "$SF_PATCH.tmp" "$SF_PATCH"
+            echo "Created libstagefright_patched.so (codec-list lookup at offset $SF_OFF)"
+        else
+            rm -f "$SF_PATCH.tmp"
+            echo "!!! WARNING: libstagefright patch verification failed, skipping"
+        fi
+    else
+        echo "!!! WARNING: expected 1 media.player in libstagefright.so, found ${SF_HITS:-0}; skipping patch"
+    fi
 fi
-if [ -f "$STAGE/libaudioclient_aidl_conversion_patched.so" ]; then
-    $BB umount -l "$ROOTFS/system/lib64/libaudioclient_aidl_conversion.so" 2>/dev/null || true
-    $BB mount --bind "$STAGE/libaudioclient_aidl_conversion_patched.so" "$ROOTFS/system/lib64/libaudioclient_aidl_conversion.so"
-    echo "Bound libaudioclient_aidl_conversion_patched.so"
+if [ -f "$SF_PATCH" ]; then
+    chmod 644 "$SF_PATCH"
+    chcon u:object_r:system_lib_file:s0 "$SF_PATCH" 2>/dev/null || true
+    $BB umount -l "$SF_SRC" 2>/dev/null || true
+    $BB mount --bind "$SF_PATCH" "$SF_SRC"
+    echo "Bound libstagefright_patched.so"
 fi
 if [ -f "$STAGE/framework-res_patched.apk" ]; then
     $BB umount -l "$ROOTFS/system/framework/framework-res.apk" 2>/dev/null || true
@@ -494,21 +683,65 @@ done
 if [ -z "$iface" ]; then
     # Mobile data: try Qualcomm rmnet_data*, Snapdragon IPA rmnet_ipa*, and
     # MediaTek ccmni* interfaces. Some Exynos builds use rmnet0/rmnet1.
-    for d in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' \
+    # `ip -o link` prints stacked links as "rmnet_data7@rmnet_ipa0": strip
+    # the parent, or no interface name ever matches.
+    for d in $(ip -o link show 2>/dev/null | awk -F': ' '{sub(/@.*/, "", $2); print $2}' \
                | grep -E '^(rmnet_data|rmnet_ipa|ccmni|rmnet)[0-9]'); do
         if have_v4 "$d"; then iface=$d; break; fi
     done
 fi
 [ -z "$iface" ] && exit 0
+# Once the guest's own networks work (switch_to_lineage.sh clears One UI's
+# netd networks and DNS caches first), netd fills each interface's table and
+# this workaround must stand down: its catch-all rule sits above Android's
+# per-network rules, so it sent traffic meant for another network (the IMS
+# network's SIP over TCP) out of the default interface. Calls then hung on
+# "Calling" because no SIP response came back. netd's table for an interface
+# is its ifindex + 1000; the table name does not resolve here (this runs in
+# the guest's mount namespace, with the guest's rt_tables). The IPv6 RA route
+# lands in that table on its own, so only a netd ("proto static") v6 default
+# counts.
+nt=$(( $(cat /sys/class/net/"$iface"/ifindex 2>/dev/null || echo -1000) + 1000 ))
+if [ "$nt" -gt 0 ] && { ip route show table "$nt" 2>/dev/null | grep -q '^default ' \
+   || ip -6 route show table "$nt" 2>/dev/null | grep -q '^default .*proto static'; }; then
+    removed=""
+    ip rule show 2>/dev/null | grep -q '^14999:' && ip rule del priority 14999 2>/dev/null && removed="v4"
+    ip -6 rule show 2>/dev/null | grep -q '^14999:' && ip -6 rule del priority 14999 2>/dev/null && removed="$removed v6"
+    [ -n "$removed" ] && echo "net routes handled by Lineage ($iface); removed catch-all ($removed)"
+    exit 0
+fi
 subnet=$(ip route show table all 2>/dev/null | awk -v d="$iface" \
     '$2=="dev" && $3==d && $0 ~ /scope link/ && $1 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\// {print $1; exit}')
 [ -z "$subnet" ] && exit 0
 gw=$(ip route show table all 2>/dev/null | awk -v d="$iface" \
     '$1=="default" && $2=="via" && $4=="dev" && $5==d && $3 ~ /^[0-9]+\./ {print $3; exit}')
-# no IPv4 default anywhere (netd never installed one): assume the first host
-[ -z "$gw" ] && gw="${subnet%.*}.1"
 ip route replace "$subnet" dev "$iface" table 4242 2>/dev/null
-ip route replace default via "$gw" dev "$iface" table 4242 2>/dev/null
+if [ -n "$gw" ]; then
+    ip route replace default via "$gw" dev "$iface" table 4242 2>/dev/null
+else
+    # No IPv4 default anywhere (netd never installed one). Mobile links are
+    # raw-IP point-to-point (T-Mobile's gateway 192.0.0.7 is not the subnet's
+    # first host), so route straight out of the device; wifi needs a next
+    # hop, so guess the first host there.
+    case "$iface" in
+        wlan*) ip route replace default via "${subnet%.*}.1" dev "$iface" table 4242 2>/dev/null ;;
+        *)     ip route replace default dev "$iface" table 4242 2>/dev/null ;;
+    esac
+fi
+# IPv6: the kernel puts the router-advertised default in its own table
+# (ifindex + 1000), which no rule reaches. Copy it into 4242 as well;
+# IPv6-only carriers (T-Mobile) send most traffic, DNS included, over it.
+gw6=$(ip -6 route show table all 2>/dev/null | awk -v d="$iface" \
+    '$1=="default" && $2=="via" && $4=="dev" && $5==d {print $3; exit}')
+if [ -n "$gw6" ]; then
+    ip -6 route replace default via "$gw6" dev "$iface" table 4242 2>/dev/null
+    cur6=$(ip -6 rule show 2>/dev/null | awk '/^14999:/{print $NF; exit}')
+    if [ "$cur6" != "4242" ]; then
+        ip -6 rule del priority 14999 2>/dev/null
+        ip -6 rule add from all lookup 4242 priority 14999 2>/dev/null
+        echo "net route repaired (v6): $iface gw $gw6"
+    fi
+fi
 # Priority must beat the per-uid rules netd already installed for previous
 # networks (15040/29040/29998): app sockets carry an fwmark, so a catch-all
 # placed after those still sends them into a dead table even though root's
@@ -518,7 +751,7 @@ if [ "$cur" != "4242" ]; then
     ip rule del priority 14999 2>/dev/null
     ip rule add from all lookup 4242 priority 14999 2>/dev/null
     ip rule del priority 31999 2>/dev/null
-    echo "net route repaired: $iface $subnet gw $gw"
+    echo "net route repaired: $iface $subnet gw ${gw:-direct}"
 fi
 exit 0
 NETFIX
@@ -528,6 +761,60 @@ cat > "$STAGE/data/local/tmp/app_storage_loop.sh" <<'APPLOOP'
 #!/system/bin/sh
 # Watches for installs/removals, gives the new package its data dirs, and makes
 # the launcher re-query so the app actually shows up.
+# Default display density for Lineage: 450 (the panel's native value) is very
+# small on a 1440-wide screen. Set it as a guest-only override once booted,
+# and only when no density was chosen yet, so a size picked in Settings or
+# with `wm density` sticks. ro.sf.lcd_density is shared with One UI, so it is
+# left alone.
+OL_DENSITY=540
+(
+    # sys.boot_completed is shared with One UI (already 1), so wait for the
+    # guest's own phone service, registered late in its boot.
+    while ! service check phone 2>/dev/null | grep -q ': found'; do sleep 5; done
+    sleep 10
+    # Touch: Samsung's touch and S Pen drivers follow the display state that One
+    # UI's framework writes to their "enabled" files ("1,0" off, "2,1" on). When
+    # One UI blanks the screen while it shuts down for the switch, the drivers
+    # are left in their screen-off mode (only wake-up taps register), and
+    # Lineage never writes the on state, so touch was dead after some switches.
+    for f in /sys/class/sec/tsp/enabled /sys/class/sec/sec_epen/enabled; do
+        [ -e "$f" ] && echo 2,1 > "$f" 2>/dev/null &&
+            echo "$(date) touch: $f set to display on" >> /data/app_storage.log
+    done
+    cur=$(settings get secure display_density_forced 2>/dev/null)
+    case "$cur" in
+        ""|null) wm density "$OL_DENSITY" 2>/dev/null &&
+            echo "$(date) display density defaulted to $OL_DENSITY" >> /data/app_storage.log ;;
+    esac
+    # Samsung IMS staged by master_prepare.sh: make it the device IMS service
+    # (calls, SMS over IMS) for both SIM slots. `cmd phone cc` is refused on a
+    # user build; `ims set-ims-service` is allowed and is not persisted, so
+    # this runs at every boot. The feature list (-f 0,1: EMERGENCY_MMTEL,
+    # MMTEL) is required: without it Android 16 overrides no features and
+    # nothing is bound. It is a device (-d) override because a carrier one is
+    # dropped again on the next carrier-config change.
+    if [ -f /data/local/tmp/ol_secims_staged ] && pm path com.sec.imsservice >/dev/null 2>&1; then
+        for s in 0 1; do
+            cmd phone ims set-ims-service -s $s -d -f 0,1 com.sec.imsservice >/dev/null 2>&1
+        done
+        echo "$(date) IMS: com.sec.imsservice set as MMTEL service (slot 1: $(cmd phone ims get-ims-service -s 1 -d -f 1))" >> /data/app_storage.log
+    elif [ -f /data/local/tmp/ol_secims_staged ]; then
+        echo "$(date) IMS: staged but com.sec.imsservice is not installed (signature carve-out missing?)" >> /data/app_storage.log
+    fi
+    # Call audio: Samsung's audio HAL plays a call through the voice channel
+    # (VSID) of the SIM slot it was last told about. One UI's Telecom sends
+    # g_call_sim_slot before every call; Lineage's never does, so with the SIM
+    # in slot 2 calls ran on slot 1's channel and were silent both ways. The
+    # HAL keeps the slot between calls, so set it once here, to the first
+    # slot with a SIM (gsm.sim.state is e.g. "ABSENT,LOADED" -> 0x02).
+    if [ -f /data/local/tmp/ol_audioparam.dex ]; then
+        slot=$(getprop gsm.sim.state | awk -F, '{ for (i = 1; i <= NF; i++) if ($i == "LOADED" || $i == "READY") { print i; exit } }')
+        if [ -n "$slot" ]; then
+            res=$(CLASSPATH=/data/local/tmp/ol_audioparam.dex app_process /system/bin com.onelineage.audioparam.Main "g_call_sim_slot=0x0$slot" 2>&1)
+            echo "$(date) call audio: $res" >> /data/app_storage.log
+        fi
+    fi
+) &
 last=""
 while true; do
     sleep 10

@@ -1,0 +1,7 @@
+*.sh text eol=lf
+*.xml text eol=lf
+*.jar binary
+*.apk binary
+*.so binary
+assets/7zz binary
+assets/zygote_exec binary
