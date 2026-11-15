@@ -128,6 +128,14 @@ if [ -n "$RET_PROD" ] && [ -f "$RET_SRC" ] && ! [ -f "$RET_PROD/priv-app/OneUIRe
     </privapp-permissions>
 </permissions>
 XML
+    # One UI declares the fingerprint feature in /system, which the guest
+    # never sees, so PixelOS never started FingerprintService. Its
+    # services_patched.jar keeps fingerprint read-only (tools/patches/
+    # fp_readonly.py): it adopts One UI's enrolled fingers and never enrolls,
+    # removes or invalidates on the shared HAL.
+    if [ -f /system/etc/permissions/android.hardware.fingerprint.xml ]; then
+        cp /system/etc/permissions/android.hardware.fingerprint.xml "$STAGE/extra/permissions/"
+    fi
     chmod -R 755 "$STAGE/extra"
     chmod 644 "$STAGE/extra/priv-app/OneUIReturn/OneUIReturn.apk" "$STAGE/extra/permissions/"*.xml
     if layer_dir priv-app "$RET_PROD/priv-app" && layer_dir permissions "$RET_PROD/etc/permissions" \
