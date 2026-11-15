@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.eggdog.oneui"
+    android:versionCode="2"
+    android:versionName="1.1">
+
+    <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="34" />
+
+    <!-- Granted by the privapp allowlist OnePixel layers into PixelOS. -->
+    <uses-permission android:name="android.permission.REBOOT" />
+
+    <application
+        android:label="One UI"
+        android:icon="@drawable/ic_launcher"
+        android:allowBackup="false">
+
+        <!-- Floating card over whatever is on screen, not a fullscreen app. -->
+        <activity
+            android:name=".ReturnActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:theme="@style/Floating">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

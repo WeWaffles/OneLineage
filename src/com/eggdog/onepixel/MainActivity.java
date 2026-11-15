@@ -767,7 +767,7 @@ public class MainActivity extends Activity {
             String[] assets = {
                 "switch_to_lineage.sh", "return_to_oneui.sh",
                 "master_prepare.sh", "master_inner.sh",
-                "zygote_exec", "ol_bridge", "clean_apex_info_list.xml",
+                "zygote_exec", "ol_bridge", "OneUIReturn.apk", "clean_apex_info_list.xml",
                 "services_patched.jar",
                 "7zz", "PermissionController_patched.apk"
             };

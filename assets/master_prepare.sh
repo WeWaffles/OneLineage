@@ -68,7 +68,7 @@ if [ -d /metadata/aconfig ]; then
     cp -a /metadata/aconfig "$STAGE/metadata/"
     for c in system system_ext product; do
         SRC=""
-        for d in "$ROOTFS/system/$c/etc/aconfig" "$ROOTFS/$c/etc/aconfig"; do
+        for d in "$ROOTFS/$c/etc/aconfig" "$ROOTFS/system/$c/etc/aconfig"; do
             [ "$c" = "system" ] && d="$ROOTFS/system/etc/aconfig"
             [ -f "$d/package.map" ] && { SRC="$d"; break; }
         done
@@ -95,6 +95,47 @@ if [ -d /metadata/aconfig ]; then
         $BB mount -o remount,ro "$ROOTFS"
     fi
     mount | grep -q "$ROOTFS/metadata " || $BB mount --bind "$STAGE/metadata" "$ROOTFS/metadata"
+fi
+
+echo "=== 3c. Built-in 'One UI' return app ==="
+# A tiny privileged system app inside PixelOS: a floating card with "Go back to
+# One UI" that reboots the phone via the REBOOT permission (no root needed).
+# system.raw's loop is read-only, so read-only overlays layer it in instead.
+# The image's /system/product is an absolute symlink to /product, which from
+# here would resolve to One UI's own /product. Never follow it.
+RET_SRC="$STAGE/OneUIReturn.apk"
+RET_PROD=""
+if [ -d "$ROOTFS/product" ] && ! [ -L "$ROOTFS/product" ]; then RET_PROD="$ROOTFS/product"
+elif [ -d "$ROOTFS/system/product" ] && ! [ -L "$ROOTFS/system/product" ]; then RET_PROD="$ROOTFS/system/product"
+else echo "No product partition inside the image; skipping the One UI return app"; fi
+# layer_dir <name> <image dir>: overlays $STAGE/extra/<name> (a tmpfs) onto it.
+layer_dir() {
+    LOWER="$STAGE/extra/$1"
+    chown -R 0:0 "$LOWER"; chcon -R u:object_r:system_file:s0 "$LOWER" 2>/dev/null
+    $BB mount -t overlay overlay -o "ro,lowerdir=$LOWER:$2" "$2"
+}
+if [ -n "$RET_PROD" ] && [ -f "$RET_SRC" ] && ! [ -f "$RET_PROD/priv-app/OneUIReturn/OneUIReturn.apk" ]; then
+    # overlayfs rejects /data's case-insensitive f2fs, so the layers live on tmpfs.
+    $BB umount "$STAGE/extra" 2>/dev/null; mkdir -p "$STAGE/extra"
+    $BB mount -t tmpfs -o size=8m,mode=755 tmpfs "$STAGE/extra"
+    mkdir -p "$STAGE/extra/priv-app/OneUIReturn" "$STAGE/extra/permissions"
+    cp -f "$RET_SRC" "$STAGE/extra/priv-app/OneUIReturn/OneUIReturn.apk"
+    cat > "$STAGE/extra/permissions/privapp-permissions-oneuireturn.xml" <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<permissions>
+    <privapp-permissions package="com.eggdog.oneui">
+        <permission name="android.permission.REBOOT"/>
+    </privapp-permissions>
+</permissions>
+XML
+    chmod -R 755 "$STAGE/extra"
+    chmod 644 "$STAGE/extra/priv-app/OneUIReturn/OneUIReturn.apk" "$STAGE/extra/permissions/"*.xml
+    if layer_dir priv-app "$RET_PROD/priv-app" && layer_dir permissions "$RET_PROD/etc/permissions" \
+        && [ -f "$RET_PROD/priv-app/OneUIReturn/OneUIReturn.apk" ]; then
+        echo "One UI return app layered into ${RET_PROD#$ROOTFS}/priv-app"
+    else
+        echo "Could not layer the One UI return app into ${RET_PROD#$ROOTFS}"
+    fi
 fi
 
 echo "=== 4. Setting up Core System Bind Mounts ==="

@@ -168,19 +168,25 @@ sleep 1
 # Build the nav-bar idmap ourselves, before zygote can cache the empty overlay.
 # LineageOS keeps product under /system/product; PixelOS has a real /product.
 # The idmap file name is the overlay path with '/' -> '@'.
-NAV_OV="/product/overlay/NavigationBarModeGestural/NavigationBarModeGesturalOverlay.apk"
-[ -f "$NAV_OV" ] || NAV_OV="/system/product/overlay/NavigationBarModeGestural/NavigationBarModeGesturalOverlay.apk"
-NAV_IDMAP="/data/resource-cache/$(echo "${NAV_OV#/}" | tr / @)@idmap"
 mkdir -p /data/resource-cache
-if [ ! -s "$NAV_IDMAP" ] && [ -f "$NAV_OV" ]; then
-    echo "[Pivoted Root] Generating gesture-nav overlay idmap..."
-    /system/bin/idmap2 create --target-apk-path /system/framework/framework-res.apk \
-        --overlay-apk-path "$NAV_OV" --idmap-path "$NAV_IDMAP" --ignore-overlayable \
-        > /data/idmap.log 2>&1 \
-        && chmod 644 "$NAV_IDMAP" && chown system:system "$NAV_IDMAP" \
-        && echo "[Pivoted Root] idmap OK ($(wc -c < "$NAV_IDMAP") bytes)" \
-        || echo "[Pivoted Root] idmap FAILED: $(head -n1 /data/idmap.log 2>/dev/null)"
-fi
+# Every overlay that targets framework-res, not just gesture nav: the Pixel
+# configs (circular icon mask, etc.) are refused by idmap2 just the same, and
+# without them icons fall back to AOSP's rounded square. Overlays aimed at
+# other packages fail the target check here and are simply skipped.
+echo "[Pivoted Root] Generating framework overlay idmaps..."
+: > /data/idmap.log
+IDMAP_OK=0
+for OV in $(find /product/overlay /system/product/overlay /system_ext/overlay /system/overlay             /vendor/overlay -name '*.apk' 2>/dev/null); do
+    IDMAP="/data/resource-cache/$(echo "${OV#/}" | tr / @)@idmap"
+    # Always rebuild: idmap2d leaves ~170-byte idmaps with no entries behind.
+    if /system/bin/idmap2 create --target-apk-path /system/framework/framework-res.apk         --overlay-apk-path "$OV" --idmap-path "$IDMAP" --ignore-overlayable >> /data/idmap.log 2>&1; then
+        chmod 644 "$IDMAP"; chown system:system "$IDMAP"
+        IDMAP_OK=$((IDMAP_OK + 1))
+    else
+        rm -f "$IDMAP"
+    fi
+done
+echo "[Pivoted Root] framework overlay idmaps: $IDMAP_OK"
 
 # Newly installed apps have no data directories (the guest has no installd), and
 # zygote kills their first launch with "Failed to mount /data_mirror/...". This
