@@ -821,13 +821,11 @@ public class MainActivity extends Activity {
                 "switch_to_lineage.sh", "return_to_oneui.sh",
                 "master_prepare.sh", "master_inner.sh",
                 "zygote_exec", "ol_bridge", "OneUIReturn.apk", "clean_apex_info_list.xml",
-                "services_patched.jar",
+                "services_patched.jar", "framework_patched.jar", "OneLineageKnoxStub.apk", "ol_audioparam.dex",
+                "libaudioclient_aidl_conversion_patched.so", "libaudio_aidl_conversion_common_cpp_patched.so",
                 "7zz", "PermissionController_patched.apk"
             };
             File filesDir = getFilesDir();
-            // OnePixel ships no framework_patched.jar: drop any LineageOS copy left from an older install
-            // so master_prepare.sh doesn't bind it over the PixelOS framework.jar.
-            new File(filesDir, "framework_patched.jar").delete();
             for (String asset : assets) {
                 File target = new File(filesDir, asset);
                 try (InputStream in = getAssets().open(asset);
@@ -848,7 +846,6 @@ public class MainActivity extends Activity {
                     Runtime.getRuntime().exec(new String[]{
                         suBinary, "-c",
                         "mkdir -p " + STAGE_DIR + " && " +
-                        "rm -f " + STAGE_DIR + "/framework_patched.jar && " +
                         "for f in " + filesDir.getAbsolutePath() + "/*; do " +
                         "  base=$(basename \"$f\"); " +
                         "  cp -f \"$f\" \"" + STAGE_DIR + "/$base\"; " +
