@@ -470,6 +470,8 @@ static int translate(int src, const struct binder_transaction_data *tr, pbuf_t *
 }
 
 #include "soft_gk.h"
+#define CAM_WORKER_IFACE "com.samsung.android.camera.ICameraServiceWorker"
+#define EDM_HELPER_IFACE "mdm.edmnativehelperservice"
 
 static void stub_reply(int ctx, node_t *nd, struct binder_transaction_data *tr) {
     if (tr->flags & TF_ONE_WAY) return;
@@ -478,6 +480,15 @@ static void stub_reply(int ctx, node_t *nd, struct binder_transaction_data *tr) 
         int32_t st = softgk_call(tr, &p);
         send_reply(ctx, st ? NULL : &p, 0, st);
     } else if (tr->code == PING_TRANSACTION) {
+        send_reply(ctx, &p, 0, 0);
+    } else if (!strcmp(nd->stub, CAM_WORKER_IFACE) && tr->code != INTERFACE_TRANSACTION) {
+        for (int i = 0; i < 16; i++) pb_i32(&p, 0);  // no exception, then zeroed results
+        send_reply(ctx, &p, 0, 0);
+    } else if (!strcmp(nd->stub, EDM_HELPER_IFACE) && tr->code != INTERFACE_TRANSACTION) {
+        // Hand-written interface: the reply is just the value (no exception
+        // header). 1 = enabled/allowed, what libedmnativehelper assumes when
+        // the service is missing.
+        pb_i32(&p, 1);
         send_reply(ctx, &p, 0, 0);
     } else if (tr->code == INTERFACE_TRANSACTION) {
         pb_str16(&p, nd->stub);
@@ -574,6 +585,87 @@ static void once_remember(uint32_t code, const pbuf_t *reply) {
         LOG("remembering IDnsResolver reply for code %u", code);
     }
     pthread_mutex_unlock(&g_once_lock);
+}
+
+#include "txmap.h"
+
+// One UI and PixelOS number the methods of many framework AIDL interfaces
+// differently (Samsung inserted methods). Calls crossing the bridge get the
+// code the other side uses for the same method (tools/txmap). Returns -1 if
+// the other side has no such method.
+static int remap_code(int ctx, const struct binder_transaction_data *tr, uint32_t *code) {
+    if (tr->code < 1 || tr->code > 0xffff) return 0;  // not an AIDL method
+    char desc[160];
+    if (call_descriptor(tr, desc, sizeof desc)) return 0;
+    for (size_t i = 0; i < sizeof TXMAP / sizeof TXMAP[0]; i++) {
+        if (strcmp(desc, TXMAP[i].desc)) continue;
+        const uint16_t *m = ctx == HOST ? TXMAP[i].h2g : TXMAP[i].g2h;
+        uint16_t n = ctx == HOST ? TXMAP[i].nh2g : TXMAP[i].ng2h;
+        if (tr->code >= n) return 0;
+        if (!m[tr->code]) {
+            // Some (Samsung listener extras) come in floods: log each once.
+            static uint8_t logged[sizeof TXMAP / sizeof TXMAP[0]][2];
+            if (!logged[i][ctx]) {
+                logged[i][ctx] = 1;
+                LOG("%s call %s/%u has no counterpart (logged once)", CTX_NAME[ctx], desc, tr->code);
+            }
+            return -1;
+        }
+        *code = m[tr->code];
+        return 0;
+    }
+    return 0;
+}
+
+// Guest apps open the host's cameras through the bridge. The host
+// cameraserver only accepts a client pid/uid forwarded by mediaserver,
+// cameraserver or telephony, so it refused ours (system uid) with
+// "Untrusted caller ... trying to forward camera access", and the guest
+// app's package means nothing on the host anyway. For the calls that open
+// a camera or use the torch, the bridge becomes the client: the
+// AttributionSourceState gets pid/uid USE_CALLING (-1) and package
+// "android". It is found by the caller's uid followed by a deviceId and a
+// package name.
+static const uint32_t CAM_CODES[] = {3, 4, 16, 17};  // connect, connectDevice, setTorchMode, turnOnTorchWithStrengthLevel
+static void camera_attr_fixup(const struct binder_transaction_data *tr, pbuf_t *out) {
+    char desc[128];
+    if (call_descriptor(tr, desc, sizeof desc) || strcmp(desc, "android.hardware.ICameraService")) return;
+    int want = 0;
+    for (size_t i = 0; i < sizeof CAM_CODES / sizeof CAM_CODES[0]; i++) want |= tr->code == CAM_CODES[i];
+    if (!want) return;
+    int32_t uid = (int32_t)tr->sender_euid;
+    for (size_t p = 4; p + 16 <= out->len; p += 4) {
+        int32_t v[4];
+        memcpy(v, out->data + p, 16);  // pid, uid, deviceId, package length
+        if (v[1] != uid || v[3] <= 0 || v[3] > 255) continue;
+        // Strings are UTF-16 on the wire, even @utf8InCpp ones.
+        size_t s = p + 16, n = (size_t)v[3], old = ((n + 1) * 2 + 3) & ~(size_t)3;
+        if (s + old > out->len) continue;
+        const uint16_t *u = (const uint16_t *)(out->data + s);
+        int ok = u[n] == 0;
+        for (size_t i = 0; i < n && ok; i++) ok = u[i] > ' ' && u[i] < 127;
+        if (!ok) continue;
+        static const char PKG[] = "android";
+        size_t nn = sizeof PKG - 1, neu = ((nn + 1) * 2 + 3) & ~(size_t)3;
+        long delta = (long)neu - (long)old;
+        if (delta > 0) pb_reserve(out, (size_t)delta);
+        memmove(out->data + s + neu, out->data + s + old, out->len - (s + old));
+        memset(out->data + s, 0, neu);
+        for (size_t i = 0; i < nn; i++) ((uint16_t *)(out->data + s))[i] = (uint8_t)PKG[i];
+        out->len += delta;
+        int32_t calling = -1, plen = (int32_t)nn, size;
+        memcpy(out->data + p, &calling, 4);
+        memcpy(out->data + p + 4, &calling, 4);
+        memcpy(out->data + p + 12, &plen, 4);
+        memcpy(&size, out->data + p - 4, 4);  // the parcelable's size header
+        size += (int32_t)delta;
+        memcpy(out->data + p - 4, &size, 4);
+        for (size_t i = 0; i < out->noffs; i++)
+            if (out->offs[i] > s) out->offs[i] += delta;
+        LOG("camera call %u: client uid %d -> bridge", tr->code, uid);
+        return;
+    }
+    LOG("camera call %u: no attribution found for uid %d", tr->code, uid);
 }
 
 static void handle_incoming(int ctx, struct binder_transaction_data *tr) {
@@ -690,10 +782,19 @@ static void handle_incoming(int ctx, struct binder_transaction_data *tr) {
         pb_free(&out);
         return;
     }
+    if (ctx == GUEST) camera_attr_fixup(tr, &out);
+    uint32_t code = tr->code;
+    if (remap_code(ctx, tr, &code)) {
+        if (!oneway) send_reply(ctx, NULL, 0, ST_UNKNOWN_TRANSACTION);
+        free_buffer(ctx, tr->data.ptr.buffer);
+        close_fds(&fds);
+        pb_free(&out);
+        return;
+    }
     uint32_t flags = tr->flags & (TF_ONE_WAY | TF_ACCEPT_FDS | TF_CLEAR_BUF);
     if (fds.n) flags |= TF_ACCEPT_FDS;
     reply_t rep = {0};
-    int st = transact(dst, nd->handle, tr->code, flags, &out, oneway ? NULL : &rep);
+    int st = transact(dst, nd->handle, code, flags, &out, oneway ? NULL : &rep);
     close_fds(&fds);
     pb_free(&out);
     free_buffer(ctx, tr->data.ptr.buffer);
@@ -874,6 +975,20 @@ static struct { const char *name; const char *iface; } STUBS[] = {
     {"android.hardware.weaver.IWeaver/default", "android.hardware.weaver.IWeaver"},
     {"android.hardware.authsecret.IAuthSecret/default", "android.hardware.authsecret.IAuthSecret"},
     {"android.hardware.gatekeeper.IGatekeeper/default", GK_IFACE},
+};
+
+// Stubs registered in the host registry, for host services that live in One
+// UI's framework, which is stopped while the guest runs.
+//  - media.camera.worker: Samsung's cameraserver waits 5 s for it on every
+//    camera open, and guest camera apps give up after about 5 s. Its calls
+//    (pingForUpdate, notifyCameraState, queryPackageName, logging, ...) are
+//    bookkeeping; the stub answers each with success and zeroed results.
+//  - edmnativehelper: Samsung Knox policy (camera/mic/screen capture allowed?).
+//    cameraserver waits 5 s for it on every camera open. The stub answers
+//    "allowed", as libedmnativehelper does when the service is missing.
+static struct { const char *name; const char *iface; } HOST_STUBS[] = {
+    {"media.camera.worker", CAM_WORKER_IFACE},
+    {"edmnativehelper", EDM_HELPER_IFACE},
 };
 
 typedef struct { names_t names; uint32_t *handles; } mirror_t;
@@ -1092,6 +1207,16 @@ int main(int argc, char **argv) {
         // never waits for it and no stub is needed.
         LOG("guest stub %s: %s", STUBS[i].name, ex == 0 ? "registered" : "not declared on this device, skipped");
         names_add(&g_guest_owned, STUBS[i].name);
+    }
+    for (size_t i = 0; i < sizeof HOST_STUBS / sizeof *HOST_STUBS; i++) {
+        int kind;
+        uint32_t h = 0;
+        node_t *own = NULL;
+        int32_t stab = 0;
+        if (!sm_check(HOST, HOST_STUBS[i].name, &kind, &h, &own, &stab) && kind == 1) continue;  // the real one runs
+        int ex = sm_add(HOST, HOST_STUBS[i].name, make_stub(HOST_STUBS[i].iface), 0x0c);
+        LOG("host stub %s: %s (%d)", HOST_STUBS[i].name, ex == 0 ? "registered" : "refused", ex);
+        if (ex == 0) names_add(&g_to_host, HOST_STUBS[i].name);
     }
     sync_once(1);
     if (ready) { fputs("ready\n", ready); fclose(ready); }
