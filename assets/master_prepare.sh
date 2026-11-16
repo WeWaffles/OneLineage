@@ -144,10 +144,10 @@ XML
     # A copy (apk + native libs) is kept in $STAGE/sysapps, refreshed from the
     # installed one, so it survives the package manager dropping the /data
     # copy, and is bound in as /product/app/<Folder>.
-    HIDE_APPS="Chrome-Stub"
+    HIDE_APPS="Chrome-Stub Aperture ApertureLensLauncher"
     # An app that was never installed can be seeded by putting its apk at
     # $STAGE/sysapps/<Folder>/<Folder>.apk.
-    SYSTEM_APPS="Firefox:org.mozilla.firefox"
+    SYSTEM_APPS="Firefox:org.mozilla.firefox GoogleCamera:com.android.MGC_9_8_102"
     mkdir -p "$STAGE/extra/app"
     for a in $HIDE_APPS; do mknod "$STAGE/extra/app/$a" c 0 0; done
     SYSAPP_BINDS=""

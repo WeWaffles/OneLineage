@@ -292,7 +292,7 @@ echo "setup skipped"
 # Apps master_prepare.sh hides from the image (HIDE_APPS): an update of them
 # in /data outlives the hidden system copy as a normal app; remove it once.
 # The marker keeps a later manual install of the same app.
-for p in com.android.chrome; do
+for p in com.android.chrome org.lineageos.aperture com.google.android.apps.googlecamera.fishfood; do
     [ -f "/data/system/ol_hidden_$p" ] && continue
     case "$(pm path "$p" 2>/dev/null)" in
         *package:/data/app/*) pm uninstall "$p" && echo "removed leftover $p" ;;
