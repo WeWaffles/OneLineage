@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test app: generates an attested key and logs the certificate chain (tag OLATTEST). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.eggdog.attest">
+    <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="34" />
+    <application android:label="Attest probe" android:hasCode="true">
+        <activity android:name=".ProbeActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
