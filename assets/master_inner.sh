@@ -271,6 +271,28 @@ echo "[Pivoted Root] Guest mediaserver loop PID: $!"
 nohup sh -c 'while true; do /system/bin/idmap2d; sleep 2; done' </dev/null >/data/idmap2d.log 2>&1 &
 echo "[Pivoted Root] Guest idmap2d loop PID: $!"
 
+# Always-on display at 1 Hz. The panel only drops below 10 Hz in doze when an
+# "aod" client asks its low-frame-rate driver for it (One UI's AOD does this
+# through vrr_lfd; PixelOS knows nothing about it). Event driven: the guest
+# logs power_screen_state [0,..] when the screen goes off/dozes and [1,..] when
+# it comes back, so this costs nothing while the phone sleeps.
+nohup sh -c '
+LFD=/sys/class/lcd/panel/vrr_lfd
+[ -w "$LFD" ] || { echo "no writable $LFD, AOD stays at the panel default"; exit 0; }
+while true; do
+    last=""
+    logcat -b events -T 1 -v brief -s power_screen_state | while read -r l; do
+        v=${l#*[}; v=${v%%,*}
+        case "$v" in 0) s=6 ;; 1) s=0 ;; *) continue ;; esac
+        [ "$s" = "$last" ] && continue
+        last=$s
+        echo "client=aod scope=normal scalability=$s" > "$LFD" && echo "$(date +%T) screen=$v aod scalability=$s"
+    done
+    sleep 5
+done
+' </dev/null >/data/ol_aod_lfd.log 2>&1 &
+echo "[Pivoted Root] AOD LFD watcher PID: $!"
+
 # Skip the setup wizard for now: once the guest settings service answers, mark
 # the device provisioned / setup complete and disable both setup wizards.
 nohup sh -c '

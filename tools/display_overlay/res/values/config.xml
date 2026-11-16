@@ -14,4 +14,10 @@
          generic PixelOS image does not ship. -->
     <string name="config_icon_mask" translatable="false">"M50 0A50 50,0,1,1,50 100A50 50,0,1,1,50 0Z"</string>
     <bool name="config_useRoundIcon">true</bool>
+    <!-- Always-on display. PixelOS ships these off/empty (Pixel device
+         overlays turn them on). The doze component is SystemUI's DozeService;
+         the brightness is the doze level (0..1 of the brightness scale). -->
+    <string name="config_dozeComponent" translatable="false">com.android.systemui/com.android.systemui.doze.DozeService</string>
+    <bool name="config_dozeAlwaysOnDisplayAvailable">true</bool>
+    <item name="config_screenBrightnessDozeFloat" format="float" type="dimen">0.1</item>
 </resources>
