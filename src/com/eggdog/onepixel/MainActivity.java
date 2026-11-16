@@ -949,7 +949,7 @@ public class MainActivity extends Activity {
                 "switch_to_lineage.sh", "return_to_oneui.sh",
                 "master_prepare.sh", "master_inner.sh",
                 "zygote_exec", "ol_bridge", "OneUIReturn.apk", "clean_apex_info_list.xml",
-                "services_patched.jar", "framework_patched.jar", "telephony-common_patched.jar", "OneLineageKnoxStub.apk", "ol_audioparam.dex", "OneLineageDisplayOverlay.apk",
+                "services_patched.jar", "framework_patched.jar", "telephony-common_patched.jar", "OneLineageKnoxStub.apk", "ol_audioparam.dex", "OneLineageDisplayOverlay.apk", "OneLineageSystemUIOverlay.apk",
                 "libaudioclient_aidl_conversion_patched.so", "libaudio_aidl_conversion_common_cpp_patched.so",
                 "7zz", "PermissionController_patched.apk"
             };

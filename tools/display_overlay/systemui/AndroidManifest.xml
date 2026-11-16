@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Static SystemUI overlay for the PixelOS guest. PixelOS ships
+  dimen/pixel_pitch = -1 (Pixel device overlays set the real value), and
+  UdfpsOverlayInteractor sizes the lock screen fingerprint icon as
+  udfps_icon_size (micrometers) / pixel_pitch. With -1 the icon came out at
+  -6000 px and only its dark background circle was drawn. master_prepare.sh
+  layers it into the guest's /product/overlay next to the display overlay.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.onelineage.overlay.systemui">
+    <overlay android:targetPackage="com.android.systemui" android:isStatic="true" android:priority="900" />
+    <application android:hasCode="false" />
+</manifest>

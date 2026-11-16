@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Micrometers per pixel: 25400 / 409.43 dpi (SM-S942U panel). -->
+    <item name="pixel_pitch" format="float" type="dimen">62.04</item>
+</resources>

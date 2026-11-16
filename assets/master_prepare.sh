@@ -169,6 +169,17 @@ else
     $BB mount -t tmpfs -o size=1m,mode=755 tmpfs "$DLAYER"
     mkdir -p "$DLAYER/OneLineageDisplay"
     touch "$DLAYER/OneLineageDisplay/OneLineageDisplayOverlay.apk"
+    # SystemUI's pixel pitch, which sizes the lock screen fingerprint icon
+    # (tools/display_overlay/systemui).
+    SUI_APK="$STAGE/OneLineageSystemUIOverlay.apk"
+    if [ -f "$SUI_APK" ]; then
+        chmod 644 "$SUI_APK"
+        chcon u:object_r:system_file:s0 "$SUI_APK" 2>/dev/null || true
+        # A real copy in its own folder: a second bind mount next to the
+        # display overlay left zygote without that overlay's idmap.
+        mkdir -p "$DLAYER/OneLineageSystemUI"
+        cp "$SUI_APK" "$DLAYER/OneLineageSystemUI/OneLineageSystemUIOverlay.apk"
+    fi
     chmod -R a+rX "$DLAYER"
     chcon -R u:object_r:system_file:s0 "$DLAYER" 2>/dev/null || true
     if $BB mount -t overlay overlay -o "ro,lowerdir=$DLAYER:$DISP_DIR" "$DISP_DIR" &&
@@ -294,6 +305,28 @@ XML
         echo "Samsung IMS in the guest: off (copy failed)"
         rm -rf "$SECIMS"
     fi
+fi
+
+echo "=== 3e. Under-display fingerprint location ==="
+# Samsung's fingerprint HAL reports no sensor location, so PixelOS's lock
+# screen never drew the fingerprint icon. The driver gives the position in mm
+# ("<center from bottom>,<center from middle>,...,<icon size>,..."); convert it
+# to pixels with One UI's real panel dpi while One UI is still up.
+# services_patched.jar reads vendor.ol.udfps_{x,y,r} (tools/patches/
+# udfps_location.py); master_inner.sh sets them in the guest.
+rm -f "$STAGE/data/local/tmp/ol_udfps"
+FPPOS=$(cat /sys/class/fingerprint/fingerprint/position 2>/dev/null)
+FPDPI=$(dumpsys display 2>/dev/null | grep -o -m1 '[0-9.]* x [0-9.]* dpi' | cut -d' ' -f3)
+FPSIZE=$(wm size 2>/dev/null | grep -o 'Physical size: [0-9]*x[0-9]*' | grep -o '[0-9]*x[0-9]*')
+if [ -n "$FPPOS" ] && [ -n "$FPDPI" ] && [ -n "$FPSIZE" ]; then
+    echo "$FPPOS $FPDPI $FPSIZE" | $BB awk '{
+        split($1, p, ","); split($3, s, "x"); mm = $2 / 25.4
+        x = s[1] / 2 + p[2] * mm; y = s[2] - p[1] * mm; r = p[7] / 2 * mm
+        if (p[1] > 0 && r > 0) printf "%d %d %d\n", x + 0.5, y + 0.5, r + 0.5
+    }' > "$STAGE/data/local/tmp/ol_udfps"
+    echo "Fingerprint location: $(cat "$STAGE/data/local/tmp/ol_udfps") (from $FPPOS at $FPDPI dpi)"
+else
+    echo "Fingerprint location: unknown (no position, dpi or screen size)"
 fi
 
 echo "=== 4. Setting up Core System Bind Mounts ==="

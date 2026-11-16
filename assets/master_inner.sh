@@ -184,6 +184,13 @@ if [ -w $TSP ] && [ -r $BL ]; then
     echo "[Pivoted Root] Touch power watcher started"
 fi
 
+# Under-display fingerprint location from master_prepare.sh (x y radius, px).
+if [ -s /data/local/tmp/ol_udfps ]; then
+    read -r UX UY UR < /data/local/tmp/ol_udfps
+    setprop vendor.ol.udfps_x "$UX"; setprop vendor.ol.udfps_y "$UY"; setprop vendor.ol.udfps_r "$UR"
+    echo "[Pivoted Root] Fingerprint location: $UX,$UY r=$UR"
+fi
+
 echo "[Pivoted Root] Starting LineageOS BootAnimation..."
 setprop service.bootanim.exit 0
 /system/bin/bootanimation > /data/anim.log 2>&1 &
