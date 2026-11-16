@@ -74,11 +74,17 @@ Since then (newest first):
 - `master_inner.sh` has a watcher that follows the guest event log `power_screen_state` ([0,..] off/doze, [1,..] on) and writes that client; log at `lineage_stage/data/ol_aod_lfd.log`. Verified in PixelOS: dozing = 1.0-120 Hz, awake = 10-120 Hz, same as One UI.
 - The doze brightness in the log matched the manual level (~10 nits), so the 0.1 value may not apply. Tune if AOD is too dim or bright.
 
-## Next up: device and strong integrity
+## Play Integrity: device/strong (investigated, unsolved)
 
-- Not started. First find out what the user's checker app shows for each verdict, and whether a Play Integrity Fix or keybox is already in the image (check `assets/` and master_prepare).
-- Caveat to explain to the user: the container shares One UI's bootloader state and TEE. Device and strong integrity are hardware-attestation backed, so they may need a valid keybox, and strong may not be reachable at all.
-- Ask the user before downloading anything (keyboxes, modules, tools).
+Only **basic** passes (user's checker). Ruled out, so the next session doesn't repeat it:
+- Attestation is genuine. `tools/attest_probe` (build: `tools/attest_probe/build.sh`; run in PixelOS; logcat tag `OLATTEST`) shows hardware KeyMint (TEE v4.0) and StrongBox chains with remotely provisioned intermediates (Droid CA2/CA3 under Key Attestation CA1), Verified boot green, bootloader locked, Android 16, patch 2026-07. No serial is on Google's revocation list (https://android.googleapis.com/attestation/status).
+- The guest's `framework_patched.jar` has PixelOS `PropImitationHooks` with two switches: `persist.sys.pihooks.disable.gms_props` (the fake Pixel 9a beta fingerprint for GMS/Finsky) and `persist.sys.pihooks.disable.gms_key_attestation_block` (blocks key attestation for droidguard). Set them in the guest with `nsenter -t <guest system_server> -m -- /system/bin/setprop ...`, then force-stop `com.google.android.gms` and `com.android.vending`. Each alone and both together: still basic. They were put back to false.
+- Guest props are clean (user, release-keys, green, locked, debuggable 0, SELinux enforcing, real model).
+- The guest mount table looks like a container: ext4 loop `/`, about 40 binds with `/local/tmp/lineage_stage` roots, overlayfs on /product and /system_ext, `/data/adb`. A temporary watcher removed 28 of those from the `gms.unstable` mount namespace (`nsenter -t <pid> -m -- umount -l ...`; DroidGuard stayed alive): no change. Still visible there: the loop-mounted `/` and APEXes and the /data binds.
+- Not tried: hiding the rest of the mounts, system app signatures, a real keybox. Strong probably needs a genuinely certified OS image and may be unreachable.
+- Backup from before these experiments: git tag `backup/before-mount-hiding`, plus `C:\Users\Avett\Documents\OneLineage-backups\2026-11-16-before-mount-hiding` (repo bundle and the working apk).
+- The probe app `com.eggdog.attest` is still installed in the guest (`pm uninstall` fails in the guest shell with an AppOps NPE; remove it from Settings).
+- Ask the user before downloading anything.
 
 ## Safety rules learned (also in memory)
 
