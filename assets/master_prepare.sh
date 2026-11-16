@@ -136,6 +136,47 @@ XML
     if [ -f /system/etc/permissions/android.hardware.fingerprint.xml ]; then
         cp /system/etc/permissions/android.hardware.fingerprint.xml "$STAGE/extra/permissions/"
     fi
+    # Image app changes. HIDE_APPS: folders of the image's /product/app that
+    # PixelOS should not see (overlayfs whiteouts; the image is untouched).
+    # Their package names also go in the leftover-removal loop in
+    # master_inner.sh, which removes a /data update of them once.
+    # SYSTEM_APPS: installed apps to turn into system apps, as Folder:package.
+    # A copy (apk + native libs) is kept in $STAGE/sysapps, refreshed from the
+    # installed one, so it survives the package manager dropping the /data
+    # copy, and is bound in as /product/app/<Folder>.
+    HIDE_APPS="Chrome-Stub"
+    # An app that was never installed can be seeded by putting its apk at
+    # $STAGE/sysapps/<Folder>/<Folder>.apk.
+    SYSTEM_APPS="Firefox:org.mozilla.firefox"
+    mkdir -p "$STAGE/extra/app"
+    for a in $HIDE_APPS; do mknod "$STAGE/extra/app/$a" c 0 0; done
+    SYSAPP_BINDS=""
+    for e in $SYSTEM_APPS; do
+        d=${e%%:*}; pkg=${e#*:}; KEEP="$STAGE/sysapps/$d"
+        SRC=$(ls -d "$STAGE/data/app/"*/"$pkg"-* 2>/dev/null | head -1)
+        if [ -n "$SRC" ] && [ -f "$SRC/base.apk" ] &&
+           [ "$(stat -c %s "$SRC/base.apk")" != "$(stat -c %s "$KEEP/$d.apk" 2>/dev/null)" ]; then
+            rm -rf "$KEEP"; mkdir -p "$KEEP"
+            cp "$SRC/base.apk" "$KEEP/$d.apk" && { [ ! -d "$SRC/lib" ] || cp -r "$SRC/lib" "$KEEP/"; } &&
+                echo "System app $d: copied from ${SRC#$STAGE/data}"
+        fi
+        # A seeded apk has no extracted native libs; system apps need them
+        # next to the apk (lib/arm64) when the apk compresses them.
+        if [ -f "$KEEP/$d.apk" ] && ! [ -d "$KEEP/lib" ] &&
+           $BB unzip -l "$KEEP/$d.apk" 2>/dev/null | grep -q ' lib/arm64-v8a/'; then
+            mkdir -p "$KEEP/lib/arm64" "$KEEP/.x"
+            $BB unzip -o -q "$KEEP/$d.apk" 'lib/arm64-v8a/*' -d "$KEEP/.x" &&
+                mv "$KEEP/.x/lib/arm64-v8a/"* "$KEEP/lib/arm64/" && echo "System app $d: native libs extracted"
+            rm -rf "$KEEP/.x"
+        fi
+        if [ -f "$KEEP/$d.apk" ]; then
+            chown -R 0:0 "$KEEP"; chmod -R a+rX "$KEEP"; chmod 644 "$KEEP/$d.apk"
+            chcon -R u:object_r:system_file:s0 "$KEEP" 2>/dev/null
+            mkdir -p "$STAGE/extra/app/$d"; SYSAPP_BINDS="$SYSAPP_BINDS $d"
+        else
+            echo "System app $d: $pkg is not installed in PixelOS yet, skipped"
+        fi
+    done
     chmod -R 755 "$STAGE/extra"
     chmod 644 "$STAGE/extra/priv-app/OneUIReturn/OneUIReturn.apk" "$STAGE/extra/permissions/"*.xml
     if layer_dir priv-app "$RET_PROD/priv-app" && layer_dir permissions "$RET_PROD/etc/permissions" \
@@ -143,6 +184,15 @@ XML
         echo "One UI return app layered into ${RET_PROD#$ROOTFS}/priv-app"
     else
         echo "Could not layer the One UI return app into ${RET_PROD#$ROOTFS}"
+    fi
+    if layer_dir app "$RET_PROD/app"; then
+        for d in $SYSAPP_BINDS; do
+            $BB mount --bind "$STAGE/sysapps/$d" "$RET_PROD/app/$d" && echo "System app $d layered in" ||
+                echo "System app $d: bind failed"
+        done
+        echo "Hidden image apps: $HIDE_APPS"
+    else
+        echo "Could not layer ${RET_PROD#$ROOTFS}/app (app hiding and system apps off)"
     fi
 fi
 
