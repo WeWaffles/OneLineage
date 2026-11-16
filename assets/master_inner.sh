@@ -323,5 +323,47 @@ for p in com.android.chrome org.lineageos.aperture com.google.android.apps.googl
 done
 ' </dev/null >/data/skip_setup.log 2>&1 &
 
+# SELinux enforcing. switch_to_lineage.sh drops to permissive while it stages
+# the guest; PixelOS has to run enforcing, because the guest zygote only
+# installs its seccomp filters when SELinux is enforcing at the moment it
+# starts (app processes otherwise show "Seccomp: 0"), and apps can see the
+# mode. The guest runs against Samsung's policy, so the guest daemons (they
+# run as the ksu domain) and a few lineage_* services need extra allow rules,
+# patched into the live policy with KernelSU (gone again at the next boot).
+# Opt out: touch /data/local/tmp/lineage_stage/data/local/tmp/ol_permissive
+# on the host. If the guest has not finished booting after 3 minutes the
+# watchdog below drops back to permissive.
+if [ -f /data/local/tmp/ol_permissive ]; then
+    echo "[Pivoted Root] SELinux: staying permissive (ol_permissive)"
+else
+    # The policy rules (and the permissive core domains) are patched in by
+    # master_prepare.sh: ksud sepolicy patch silently does nothing from in
+    # here, but works there, before the pivot.
+    # Label installed apps and their odex the way the guest's own file
+    # contexts say (apk_data_file, dalvikcache_data_file). Under permissive
+    # the plain system_data_file labels did not matter; enforcing refuses to
+    # map native libraries out of them ("dlopen failed: couldn't map").
+    /system/bin/restorecon -RF /data/app /data/dalvik-cache >/dev/null 2>&1
+    setenforce 1 2>/dev/null || echo 1 > /sys/fs/selinux/enforce
+    echo "[Pivoted Root] SELinux mode: $(cat /sys/fs/selinux/enforce 2>/dev/null) (1 = enforcing)"
+    # getprop sys.boot_completed here may still answer with One UI's value
+    # (it said "booted" while the guest had crashed), so wait for the guest
+    # launcher process instead.
+    nohup sh -c '
+    for i in $(seq 1 180); do
+        [ -n "$(pidof com.google.android.apps.nexuslauncher)" ] && break
+        sleep 1
+    done
+    if [ -z "$(pidof com.google.android.apps.nexuslauncher)" ]; then
+        setenforce 0 2>/dev/null || echo 0 > /sys/fs/selinux/enforce
+        echo "guest did not finish booting: back to permissive"
+    else
+        echo "guest booted enforcing"
+        sleep 60
+        dmesg | grep "avc: .*denied" | grep "permissive=0" | tail -n 200
+    fi
+    ' </dev/null >/data/ol_selinux.log 2>&1 &
+fi
+
 echo "[Pivoted Root] Launching LineageOS Zygote & SystemServer via zygote_exec..."
 exec /data/zygote_exec

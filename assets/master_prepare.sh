@@ -196,6 +196,30 @@ XML
     fi
 fi
 
+echo "=== 3c1. seapp_contexts rule for the Google NetworkStack ==="
+# The guest runs the Google-signed NetworkStack (NetworkStackGoogle). PixelOS's
+# mac_permissions only maps its own signing key to seinfo=network_stack, so this
+# one gets seinfo=default, and the only network_stack rule in seapp_contexts
+# needs seinfo=network_stack. Permissive let that slide; enforcing made zygote
+# abort the process ("seapp_context_lookup_internal: No match for app with uid
+# 1073 ... com.android.networkstack.process"), so IpClient never came up and
+# Wi-Fi/mobile data had no network. One extra line, bound over the image's
+# product_seapp_contexts (the image file itself is untouched).
+NS_RULE="user=network_stack seinfo=default domain=network_stack type=radio_data_file"
+NS_SRC="$RET_PROD/etc/selinux/product_seapp_contexts"
+if [ -n "$RET_PROD" ] && [ -f "$NS_SRC" ]; then
+    $BB umount -l "$NS_SRC" 2>/dev/null || true   # a bind from an earlier run
+    { $BB grep -vxF "$NS_RULE" "$NS_SRC"; echo "$NS_RULE"; } > "$STAGE/product_seapp_contexts"
+    chmod 644 "$STAGE/product_seapp_contexts"; $BB chcon u:object_r:system_file:s0 "$STAGE/product_seapp_contexts" 2>/dev/null || true
+    if $BB mount --bind "$STAGE/product_seapp_contexts" "$NS_SRC"; then
+        echo "seapp_contexts: network_stack rule added"
+    else
+        echo "!!! seapp_contexts: bind failed, NetworkStack will not start when enforcing"
+    fi
+else
+    echo "!!! seapp_contexts: no product_seapp_contexts in the image"
+fi
+
 echo "=== 3c2. Screen shape overlay (camera hole, rounded corners) ==="
 # The image's framework-res says the screen is a plain rectangle, so SystemUI
 # laid the status bar out with the clock hugging the rounded top-left corner
@@ -601,10 +625,12 @@ chmod 0770 "$STAGE/data/misc/bluedroid" "$STAGE/data/misc/bluetooth" 2>/dev/null
 echo "=== 5b. Relabeling staged /data for guest SELinux ==="
 $BB chcon u:object_r:system_data_file:s0 "$STAGE/data" 2>/dev/null || true
 for d in data/system data/system_de data/system_ce \
-         data/misc data/misc_de data/misc_ce data/anr data/dalvik-cache \
-         data/local data/resource-cache data/app data/rollback data/incremental; do
+         data/misc data/misc_de data/misc_ce data/anr \
+         data/local data/resource-cache data/rollback data/incremental; do
     [ -e "$STAGE/$d" ] && $BB chcon -R u:object_r:system_data_file:s0 "$STAGE/$d" 2>/dev/null || true
 done
+# data/app and data/dalvik-cache are labeled by restorecon in master_inner.sh
+# (apk_data_file, dalvikcache_data_file), not here.
 # App data roots only: installd labels each app dir with that app's own MLS
 # categories, and relabeling them recursively stripped those.
 for d in "$STAGE/data/user" "$STAGE/data/user_de" "$STAGE/data/user/0" "$STAGE/data/user_de/0"; do
@@ -613,6 +639,86 @@ done
 # data/apex (host /data/apex) and data/adb (host /data/adb) are left alone: they
 # are the host's own directories bind-mounted in, already labeled correctly, and
 # chcon-ing a bind mount would relabel the host's copy.
+
+echo "=== 5b2. Labeling staged system files for enforcing SELinux ==="
+# Everything below is bind-mounted or layered into the guest's /system, /product
+# and /system_ext. Created under /data/local/tmp it is shell_data_file, which
+# system_server may not read once SELinux is enforcing (the patched
+# PermissionController then went missing: "exactly one permissions manager;
+# found []"). Real system files are system_file.
+for f in "$STAGE/extra" "$STAGE/sysapps" "$STAGE/secims" "$STAGE/display_layer" "$STAGE/secims_layer" "$STAGE/empty_dir" \
+         "$STAGE"/*_patched.* "$STAGE"/OneLineage*.apk "$STAGE/PermissionController_patched.apk"; do
+    [ -e "$f" ] && $BB chcon -R u:object_r:system_file:s0 "$f" 2>/dev/null || true
+done
+
+echo "=== 5b3. SELinux policy for the enforcing guest ==="
+# switch_to_lineage.sh starts permissive; master_inner.sh switches to enforcing
+# right before zygote (zygote only installs its seccomp filters then). The guest
+# runs PixelOS userspace against Samsung's policy, which is missing types the
+# guest's own *_service_contexts / *_seapp_contexts use. servicemanager cannot
+# even evaluate "add" for a type that does not exist (system_server died
+# creating LineageHardwareService, "SELinux denied for service"), and allow
+# rules for a missing type are silently ignored, so the types are defined first.
+# Patched into the live policy with KernelSU (gone at the next boot). This has
+# to happen here: from inside the guest's pivoted root ksud sepolicy patch exits
+# 0 and changes nothing. ksud also exits 0 for statements it ignores, so the
+# result is checked against the kernel's policy below.
+KSUD=/data/adb/ksu/bin/ksud
+OL_RULES_OK=0; OL_RULES_BAD=0
+olpatch() {
+    if $KSUD sepolicy patch "$1" >/dev/null 2>&1; then OL_RULES_OK=$((OL_RULES_OK+1))
+    else OL_RULES_BAD=$((OL_RULES_BAD+1)); echo "sepolicy rule failed: $1"; fi
+}
+if [ -x "$KSUD" ] && [ ! -f "$STAGE/data/local/tmp/ol_permissive" ]; then
+    # Service types the guest registers but Samsung's policy lacks.
+    for t in adbroot_service horae_service lineage_globalactions_service lineage_hardware_service              lineage_health_interface_service lineage_livedisplay_service lineage_profile_service              lineage_trust_service osense_service vendor_audioserver_service vendor_qrs_service; do
+        olpatch "type $t"
+        olpatch "typeattribute $t service_manager_type"
+        for d in system_server ksu system_app platform_app priv_app; do
+            olpatch "allow $d $t service_manager { add find list }"
+        done
+        olpatch "allow appdomain $t service_manager { find }"
+    done
+    # App domains named in the guest's seapp_contexts that Samsung's policy lacks.
+    for a in esim_switcher_app ifaa_app mediashell_app pen_app updater_app; do
+        olpatch "type $a"; olpatch "typeattribute $a domain"; olpatch "typeattribute $a appdomain"
+        olpatch "permissive $a"
+    done
+    while read -r rule; do
+        [ -n "$rule" ] && olpatch "$rule"
+    done <<'OLRULES'
+allow appdomain ksu keystore2_key { delete gen_unique_id get_info rebind use update }
+allow system_server ksu keystore2_key { rebind get_info use delete update }
+allow system_server ksu keystore2 { add_auth lock unlock clear_ns change_password change_user get_state }
+allow system_app default_android_service service_manager { add find }
+allow system_app lineage_health_interface_service service_manager { find }
+allow system_app lineage_hardware_service service_manager { find }
+allow system_app adbroot_service service_manager { find }
+allow ksu vendor_audioserver_service service_manager { add }
+allow ksu lineage_hardware_service service_manager { find }
+allow ksu lineage_livedisplay_service service_manager { find }
+allow system_server ksu service_manager { list }
+allow system_server lineage_hardware_service service_manager { add }
+allow system_server lineage_livedisplay_service service_manager { add }
+allow system_server default_android_service service_manager { find }
+OLRULES
+    # Safety net while the guest's labels are being tightened: the core system
+    # domains log their denials but are not blocked. SELinux itself stays
+    # enforcing (that is what turns seccomp on and what apps can read); app
+    # domains such as untrusted_app and gmscore_app stay fully enforced.
+    # Empty this list to enforce those too.
+    for d in system_server system_app platform_app priv_app; do olpatch "permissive $d"; done
+    # ksud cannot be trusted to say whether it worked: look in the real policy.
+    $BB cat /sys/fs/selinux/policy > "$STAGE/.ol_policy_check" 2>/dev/null
+    # (BusyBox grep has no -a; -c counts matching lines of the binary policy.)
+    if [ "$($BB grep -c lineage_hardware_service "$STAGE/.ol_policy_check" 2>/dev/null || echo 0)" != 0 ]; then
+        echo "SELinux policy check: lineage_hardware_service is defined"
+    else
+        echo "!!! SELinux policy check: lineage_hardware_service is MISSING, the guest will not boot enforcing"
+    fi
+    rm -f "$STAGE/.ol_policy_check"
+fi
+echo "SELinux policy patches applied: $OL_RULES_OK (failed: $OL_RULES_BAD)"
 
 echo "=== 5c. Fixing staged /data ownership and modes ==="
 # The stage tree is created by root under /data/local/tmp, so its top-level
