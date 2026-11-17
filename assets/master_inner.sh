@@ -343,7 +343,15 @@ else
     # contexts say (apk_data_file, dalvikcache_data_file). Under permissive
     # the plain system_data_file labels did not matter; enforcing refuses to
     # map native libraries out of them ("dlopen failed: couldn't map").
-    /system/bin/restorecon -RF /data/app /data/dalvik-cache >/dev/null 2>&1
+    # Same for the rest of the staged /data, which master_prepare.sh stamped
+    # with a generic label: /data/media (the media provider could not write
+    # screenshots, photos or downloads: EACCES), /data/resource-cache (theme
+    # overlays apps read) and the system/misc trees. Never /data/user*,
+    # /data/data (installd gives each app dir its own MLS categories),
+    # /data/adb, /data/apex (host directories bound in) or /data/local.
+    /system/bin/restorecon -RF /data/app /data/dalvik-cache /data/media /data/resource-cache \
+        /data/misc /data/misc_ce /data/misc_de /data/system /data/system_ce /data/system_de \
+        /data/anr /data/vendor_ce /data/vendor_de /data/property /data/incremental /data/app-staging >/dev/null 2>&1
     setenforce 1 2>/dev/null || echo 1 > /sys/fs/selinux/enforce
     echo "[Pivoted Root] SELinux mode: $(cat /sys/fs/selinux/enforce 2>/dev/null) (1 = enforcing)"
     # getprop sys.boot_completed here may still answer with One UI's value

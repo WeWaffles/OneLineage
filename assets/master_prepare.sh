@@ -651,6 +651,14 @@ for f in "$STAGE/extra" "$STAGE/sysapps" "$STAGE/secims" "$STAGE/display_layer" 
     [ -e "$f" ] && $BB chcon -R u:object_r:system_file:s0 "$f" 2>/dev/null || true
 done
 
+echo "=== 5b2b. No incremental installs ==="
+# Play installs big apps (Cash App) over incremental-fs. The files on that mount
+# get system_data_file, which app domains may not map executable, so the app's
+# native libs fail with "dlopen failed: couldn't map ... Permission denied".
+# The property is only read when system_server starts (and One UI is replaced
+# by the guest), and it goes back with the next reboot.
+/data/adb/ksu/bin/resetprop ro.incremental.enable no 2>/dev/null || true
+
 echo "=== 5b3. SELinux policy for the enforcing guest ==="
 # switch_to_lineage.sh starts permissive; master_inner.sh switches to enforcing
 # right before zygote (zygote only installs its seccomp filters then). The guest
