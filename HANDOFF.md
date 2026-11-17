@@ -87,6 +87,10 @@ How it works (all in `assets/`):
 - `master_inner.sh` flips to enforcing and starts a watchdog: if the guest launcher process doesn't appear within 3 minutes it goes back to permissive (log: `lineage_stage/data/ol_selinux.log`). Opt out: create `lineage_stage/data/local/tmp/ol_permissive`.
 - Gotchas: the guest and host SHARE one property store (a `setprop` from the host shell is seen in the guest, and `sys.boot_completed` can still be One UI's value). `nsenter -t <pid>` needs the guest's pid (system_server's `/proc/<pid>/ns/mnt` differs from `/proc/1/ns/mnt`); pids change every boot. The audit log rate-limits (`audit_rate_limit=5`), so "no denials" is weak evidence. `build_apk_windows.sh` sometimes fails with a missing `build/compiled_res.zip`: just rerun it.
 
+## Incremental installs are off (Cash App crash)
+Play installs big apps over incremental-fs; those files are system_data_file and apps cannot map native libs from them (`dlopen failed: couldn't map ... Permission denied`). master_prepare step 5b2b runs `resetprop ro.incremental.enable no`, so the guest has no incremental feature. Apps installed before that fix stay broken until reinstalled from Play. Verified with Cash App.
+Also tried for Play Integrity: registering the GSF Android ID (393541a27d416293) at Google's uncertified-device page. No change to the device verdict yet.
+
 ## Play Integrity: device/strong (investigated, unsolved)
 
 Note: everything below was tested BEFORE SELinux enforcing/seccomp, and the pihooks property tests are valid (properties are shared). Re-run the checker now.
