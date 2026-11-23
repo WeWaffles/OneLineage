@@ -18,10 +18,22 @@ Hot-switch between stock **One UI** and a **LineageOS 23.2 (Android 16) GSI** on
 - Enough free space on `/data` for the extracted GSI
 - Internet access for the GSI download (LineageOS 23.2 GSI, EXT4, VANILLA or GAPPS builds from SourceForge)
 
+## Installing (OnePixel)
+Install the APK and tap **Download**. The app does the rest on the phone, with nothing to push over adb:
+1. It fetches only the `system`, `system_ext` and `product` partitions of the PixelOS 16.2 `waffle` OTA (`PixelOS_waffle-16.2-20260511-0722.zip` on SourceForge) with parallel HTTP range requests, decompresses them with the bundled 7-Zip and checks each against the SHA-256 in the OTA manifest (`tools/payload`, `assets/ol_payload.dex`). About 2.5 GB is downloaded and about 4.2 GB written to `/data`. An interrupted install resumes at the partition level.
+2. `assets/build_pixelos.sh` patches the images in place: it removes the Oplus framework and OnePlus-only apps, daemons and overlays, fixes the boot classpath and one sepolicy file, gives the three `build.prop`s a generic PixelOS identity and copies this phone's own `framework-res` overlay into `product`.
+3. `master_prepare.sh` loop-mounts `system_ext.raw` and `product.raw` over the system image at every switch.
+
+The Pixel Camera port (MGC_9.8.102) has no direct download link. Put it at `Download/OnePixel/GoogleCamera.apk` and the next switch installs it as a system app; the lens fix it needs is applied automatically after its first launch.
+
+A locally built merged image at `Download/OnePixel/system.img` still takes priority over the download.
+
 ## What's in here
 | Path | What it is |
 | --- | --- |
 | `src/`, `res/`, `AndroidManifest.xml` | The Android app (`com.wewaffles.onelineage`) |
+| `assets/build_pixelos.sh` | Patches the downloaded PixelOS images on the phone |
+| `tools/payload/` | The on-phone OTA extractor (builds `assets/ol_payload.dex`) |
 | `assets/master_prepare.sh` | Stages the rootfs, binds the patched files, fixes labels/ownership |
 | `assets/master_inner.sh` | Runs inside the container, starts the guest zygote |
 | `assets/switch_to_lineage.sh` / `return_to_oneui.sh` | Switch in and back out |

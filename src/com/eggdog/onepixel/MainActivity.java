@@ -109,8 +109,11 @@ public class MainActivity extends Activity {
     private static final String SYSTEM_RAW = STAGE_DIR + "/system.raw";
 
     private static final String LOCAL_IMAGE = "/sdcard/Download/OnePixel/system.img";
-    private static final String URL_VANILLA = "https://downloads.sourceforge.net/project/misterztr-gsi/LineageOS/Android%2016/LineageOS-23.2-20260524-VANILLA-EXT4-GSI.7z?use_mirror=autoselect";
-    private static final String URL_GAPPS = "https://downloads.sourceforge.net/project/misterztr-gsi/LineageOS/Android%2016/LineageOS-23.2-20260524-GAPPS-EXT4-GSI.7z?use_mirror=autoselect";
+    // The ROM OnePixel is built from: PixelOS 16.2 for the OnePlus 12 ("waffle"), a full A/B
+    // OTA. Only its system, system_ext and product partitions are fetched (HTTP ranges), then
+    // build_pixelos.sh patches them on the phone.
+    private static final String OTA_URL = "https://sourceforge.net/projects/pixelos-releases/files/sixteen/waffle/PixelOS_waffle-16.2-20260511-0722.zip/download";
+    private static final String INSTALLING_FLAG = STAGE_DIR + "/.installing";
     private static final long ESTIMATED_VANILLA_BYTES = 922022276L;
     private static final long ESTIMATED_GAPPS_BYTES = 1167859370L;
 
@@ -303,6 +306,10 @@ public class MainActivity extends Activity {
         cardFlavorGapps.setOnClickListener(clickGapps);
 
         selectFlavor(Flavor.GAPPS);
+        // OnePixel installs PixelOS only, so there is no edition to pick.
+        cardFlavorVanilla.setVisibility(View.GONE);
+        cardFlavorGapps.setVisibility(View.GONE);
+        tvDownloadDesc.setText(R.string.pixelos_install_desc);
     }
 
     private void selectFlavor(Flavor flavor) {
@@ -911,7 +918,7 @@ public class MainActivity extends Activity {
     private void checkImageStatus() {
         executor.execute(() -> {
             try {
-                Process p = Runtime.getRuntime().exec(new String[]{suBinary, "-c", "[ -f " + SYSTEM_RAW + " ] && ls -lh " + SYSTEM_RAW + " || echo 'MISSING'"});
+                Process p = Runtime.getRuntime().exec(new String[]{suBinary, "-c", "[ -f " + SYSTEM_RAW + " ] && [ ! -f " + INSTALLING_FLAG + " ] && ls -lh " + SYSTEM_RAW + " || echo 'MISSING'"});
                 BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
                 String out = reader.readLine();
                 p.waitFor();
@@ -951,7 +958,8 @@ public class MainActivity extends Activity {
                 "zygote_exec", "ol_bridge", "OneUIReturn.apk", "clean_apex_info_list.xml",
                 "services_patched.jar", "framework_patched.jar", "telephony-common_patched.jar", "OneLineageKnoxStub.apk", "ol_audioparam.dex", "OneLineageDisplayOverlay.apk", "OneLineageSystemUIOverlay.apk",
                 "libaudioclient_aidl_conversion_patched.so", "libaudio_aidl_conversion_common_cpp_patched.so",
-                "7zz", "PermissionController_patched.apk"
+                "7zz", "PermissionController_patched.apk",
+                "build_pixelos.sh", "bootclasspath.pb", "ol_payload.dex"
             };
             File filesDir = getFilesDir();
             for (String asset : assets) {
@@ -1029,102 +1037,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void downloadFileWithRedirects(String initialUrl, File targetFile, long expectedBytes) throws Exception {
-        String currentUrl = initialUrl;
-        HttpURLConnection conn = null;
-        int redirectCount = 0;
-        final int MAX_REDIRECTS = 10;
-
-        while (redirectCount < MAX_REDIRECTS) {
-            URL url = new URL(currentUrl);
-            conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestProperty("User-Agent", "Wget/1.21.3");
-            conn.setRequestProperty("Accept", "*/*");
-            conn.setConnectTimeout(25000);
-            conn.setReadTimeout(30000);
-            conn.setInstanceFollowRedirects(false);
-
-            int code = conn.getResponseCode();
-            if (code == HttpURLConnection.HTTP_MOVED_PERM ||
-                code == HttpURLConnection.HTTP_MOVED_TEMP ||
-                code == HttpURLConnection.HTTP_SEE_OTHER ||
-                code == 307 || code == 308) {
-
-                String loc = conn.getHeaderField("Location");
-                if (loc == null || loc.trim().isEmpty()) {
-                    throw new Exception("Redirect code " + code + " without Location header");
-                }
-                currentUrl = loc.trim();
-                conn.disconnect();
-                redirectCount++;
-                appendLog(getString(R.string.log_redirect, redirectCount));
-                continue;
-            }
-
-            if (code != HttpURLConnection.HTTP_OK) {
-                throw new Exception("HTTP server error code: " + code);
-            }
-
-            break;
-        }
-
-        if (redirectCount >= MAX_REDIRECTS || conn == null) {
-            throw new Exception("Too many redirects: " + redirectCount);
-        }
-
-        long contentLength = -1;
-        try {
-            contentLength = Long.parseLong(conn.getHeaderField("Content-Length"));
-        } catch (Exception ignored) {}
-        final long totalBytes = (contentLength > 0) ? contentLength : expectedBytes;
-
-        mainHandler.post(() -> {
-            pbDownload.setMax(100);
-            pbDownload.setProgress(0);
-        });
-
-        long startMs = System.currentTimeMillis();
-        long lastUpdateMs = 0;
-        long currentBytes = 0;
-
-        try (InputStream in = conn.getInputStream();
-             OutputStream out = new FileOutputStream(targetFile)) {
-
-            byte[] buffer = new byte[65536];
-            int read;
-            while (true) {
-                waitWhileDownloadPaused();
-                read = in.read(buffer);
-                if (read == -1) break;
-                out.write(buffer, 0, read);
-                currentBytes += read;
-
-                long now = System.currentTimeMillis();
-                if (now - lastUpdateMs > 250) {
-                    lastUpdateMs = now;
-                    final int pct = (totalBytes > 0) ? (int) Math.min(100, (currentBytes * 100) / totalBytes) : 0;
-                    final long elapsedSec = Math.max(1, (now - startMs) / 1000);
-                    final double speedMb = (currentBytes / 1048576.0) / elapsedSec;
-                    final String progStr = getString(R.string.progress_downloading,
-                            currentBytes / 1048576, totalBytes / 1048576, pct, speedMb);
-                    if (!downloadPaused) {
-                        mainHandler.post(() -> {
-                            pbDownload.setProgress(pct);
-                            tvDownloadProgress.setText(progStr);
-                        });
-                    }
-                }
-            }
-            out.flush();
-        } finally {
-            conn.disconnect();
-        }
-
-        if (targetFile.length() < 1000000) {
-            throw new Exception("Downloaded file is too small (" + targetFile.length() + " bytes).");
-        }
-    }
-
     private void startNetworkDownload(final Flavor flavor) {
         if (downloadRunning) return;
         downloadRunning = true;
@@ -1160,7 +1072,8 @@ public class MainActivity extends Activity {
                         tvDownloadProgress.setText(R.string.progress_extracting);
                         btnDownloadLineage.setText(R.string.btn_installing);
                     });
-                    int mvRet = runRootCmdDrained("rm -f " + STAGE_DIR + "/*.img " + SYSTEM_RAW + "; " +
+                    int mvRet = runRootCmdDrained("rm -f " + STAGE_DIR + "/*.img " + STAGE_DIR + "/*.raw " + STAGE_DIR + "/*.raw.ok " + STAGE_DIR + "/*.grown " +
+                            STAGE_DIR + "/*.raw.part " + STAGE_DIR + "/.pixelos_patched " + INSTALLING_FLAG + "; " +
                             "mv -f " + LOCAL_IMAGE + " " + SYSTEM_RAW + " && chmod 644 " + SYSTEM_RAW);
                     if (mvRet != 0 || runRootCmdDrained("[ -s " + SYSTEM_RAW + " ]") != 0) {
                         throw new Exception(getString(R.string.log_extract_failed, mvRet));
@@ -1169,52 +1082,8 @@ public class MainActivity extends Activity {
                 }
 
                 if (!usedLocalImage) {
-                String downloadUrl = (flavor == Flavor.GAPPS) ? URL_GAPPS : URL_VANILLA;
-                final long totalBytes = (flavor == Flavor.GAPPS) ? ESTIMATED_GAPPS_BYTES : ESTIMATED_VANILLA_BYTES;
-                // Download into the app's own cache dir, NOT STAGE_DIR directly: this
-                // process writes as the unprivileged app, and /data/local/tmp paths
-                // created by root are labeled shell_data_file, which SELinux blocks
-                // untrusted_app from writing to no matter what chmod says (this is the
-                // actual cause of "lineage_dl.7z: open failed: EACCES"). su (used below
-                // for extraction) can read the app's cache dir fine, same as
-                // extractAssets() already does for the other staged files.
-                final File targetArchive = new File(getCacheDir(), "lineage_dl.7z");
-
-                appendLog(getString(R.string.log_network_fetch, flavor.name()));
-                appendLog(getString(R.string.log_url, downloadUrl));
-                setLogStatus(getString(R.string.status_downloading));
-                downloadPauseEnabled = true;
-                mainHandler.post(() -> {
-                    btnDownloadLineage.setText(R.string.btn_pause_download);
-                    btnDownloadLineage.setEnabled(true);
-                });
-
-                downloadFileWithRedirects(downloadUrl, targetArchive, totalBytes);
-                downloadPauseEnabled = false;
-                synchronized (downloadPauseLock) {
-                    downloadPaused = false;
-                    downloadPauseLock.notifyAll();
+                    installFromOta();
                 }
-
-                appendLog(getString(R.string.log_download_complete, targetArchive.length() / 1048576));
-                setLogStatus(getString(R.string.status_extracting));
-                mainHandler.post(() -> {
-                    pbDownload.setIndeterminate(true);
-                    tvDownloadProgress.setText(R.string.progress_extracting);
-                    btnDownloadLineage.setText(R.string.btn_installing);
-                    btnDownloadLineage.setEnabled(false);
-                });
-
-                appendLog(getString(R.string.log_extracting_archive, targetArchive.getAbsolutePath()));
-                String extractCmd = "rm -f " + STAGE_DIR + "/*.img " + SYSTEM_RAW + "; " +
-                                   STAGE_DIR + "/7zz x -y -o" + STAGE_DIR + " " + targetArchive.getAbsolutePath() + " && " +
-                                   "mv -f " + STAGE_DIR + "/*.img " + SYSTEM_RAW + " && " +
-                                   "rm -f " + targetArchive.getAbsolutePath() + " && chmod 644 " + SYSTEM_RAW;
-                int extRet = runRootCmdDrained(extractCmd);
-                if (extRet != 0 || !new File(SYSTEM_RAW).exists()) {
-                    throw new Exception(getString(R.string.log_extract_failed, extRet));
-                }
-                } // end network download
 
                 appendLog(getString(R.string.log_extract_complete));
 
@@ -1245,6 +1114,89 @@ public class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    // Root command whose output lines go to a callback as they arrive. Returns the exit code.
+    private int runRootStreaming(String cmd, java.util.function.Consumer<String> onLine) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(suBinary, "-c", cmd);
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+        String line;
+        while ((line = reader.readLine()) != null) onLine.accept(line);
+        return p.waitFor();
+    }
+
+    // Builds the guest image on the phone: pulls system, system_ext and product out of the
+    // PixelOS OTA (ol_payload.dex), then patches them for this phone (build_pixelos.sh).
+    // A partial run resumes: finished partitions keep a .ok marker and are skipped.
+    private void installFromOta() throws Exception {
+        boolean resume = runRootCmdDrained("[ -f " + INSTALLING_FLAG + " ]") == 0;
+        if (!resume) {
+            runRootCmdDrained("rm -f " + STAGE_DIR + "/*.img " + STAGE_DIR + "/*.raw " + STAGE_DIR + "/*.raw.ok " + STAGE_DIR + "/*.grown " +
+                    STAGE_DIR + "/*.raw.part " + STAGE_DIR + "/.pixelos_patched; rm -rf " + STAGE_DIR + "/patch; " +
+                    "touch " + INSTALLING_FLAG);
+        } else {
+            appendLog(getString(R.string.log_ota_resume));
+        }
+
+        appendLog(getString(R.string.log_ota_fetch, OTA_URL));
+        setLogStatus(getString(R.string.status_downloading));
+        mainHandler.post(() -> {
+            pbDownload.setIndeterminate(false);
+            pbDownload.setMax(100);
+            pbDownload.setProgress(0);
+            tvDownloadProgress.setText(R.string.progress_connecting);
+        });
+        final long startMs = System.currentTimeMillis();
+        final long[] lastUi = {0};
+        final long[] base = {-1};
+        final String[] error = {null};
+        int rc = runRootStreaming(
+                "chmod 755 " + STAGE_DIR + "/7zz; " +
+                "CLASSPATH=" + STAGE_DIR + "/ol_payload.dex app_process /system/bin com.onelineage.payload.Extract '" +
+                OTA_URL + "' " + STAGE_DIR + " " + STAGE_DIR + "/7zz " +
+                "system:system.raw system_ext:system_ext.raw product:product.raw 2>&1",
+                line -> {
+                    if (!line.startsWith("OLP|")) { appendLog("  " + line); return; }
+                    String[] f = line.split("\\|", 4);
+                    if (f.length < 3) return;
+                    if (f[1].equals("STAGE")) {
+                        appendLog("  " + f[2]);
+                    } else if (f[1].equals("ERROR")) {
+                        error[0] = f[2];
+                    } else if (f[1].equals("PROG") && f.length >= 4) {
+                        long now = System.currentTimeMillis();
+                        if (now - lastUi[0] < 500) return;
+                        lastUi[0] = now;
+                        final long done = Long.parseLong(f[2]);
+                        final long total = Long.parseLong(f[3]);
+                        if (base[0] < 0) base[0] = done;
+                        final int pct = total > 0 ? (int) Math.min(100, done * 100 / total) : 0;
+                        final double sec = Math.max(1, (now - startMs) / 1000.0);
+                        final double speed = (done - base[0]) / 1048576.0 / sec;
+                        final String msg = getString(R.string.progress_downloading,
+                                done / 1048576, total / 1048576, pct, speed);
+                        mainHandler.post(() -> {
+                            pbDownload.setProgress(pct);
+                            tvDownloadProgress.setText(msg);
+                        });
+                    }
+                });
+        if (rc != 0 || error[0] != null) {
+            throw new Exception(error[0] != null ? error[0] : "ROM download failed (rc=" + rc + ")");
+        }
+        appendLog(getString(R.string.log_ota_downloaded));
+
+        setLogStatus(getString(R.string.status_extracting));
+        mainHandler.post(() -> {
+            pbDownload.setIndeterminate(true);
+            tvDownloadProgress.setText(R.string.progress_patching);
+            btnDownloadLineage.setText(R.string.btn_installing);
+        });
+        rc = runRootStreaming("sh " + STAGE_DIR + "/build_pixelos.sh 2>&1", line -> appendLog("  " + line));
+        if (rc != 0) throw new Exception(getString(R.string.log_ota_patch_failed, rc));
+        runRootCmdDrained("rm -f " + INSTALLING_FLAG + " " + STAGE_DIR + "/*.raw.ok");
     }
 
     // Unmounts the container rootfs and detaches any loop device backed by a file
@@ -1315,7 +1267,9 @@ public class MainActivity extends Activity {
                     // truncating frees the backing blocks immediately even though rm -f
                     // alone would leave them held open by that loop device.
                     "truncate -s 0 " + SYSTEM_RAW + " 2>/dev/null || true; " +
-                    "rm -f " + SYSTEM_RAW + " " + STAGE_DIR + "/*.img " + STAGE_DIR + "/*.7z " + STAGE_DIR + "/*.img.tmp; " +
+                    "rm -f " + SYSTEM_RAW + " " + STAGE_DIR + "/*.raw " + STAGE_DIR + "/*.raw.ok " + STAGE_DIR + "/*.grown " + STAGE_DIR + "/*.raw.part " +
+                    STAGE_DIR + "/.pixelos_patched " + INSTALLING_FLAG + " " +
+                    STAGE_DIR + "/*.img " + STAGE_DIR + "/*.7z " + STAGE_DIR + "/*.img.tmp; " +
                     "rm -rf " + STAGE_DIR + "/data " + STAGE_DIR + "/rootfs; " +
                     "mkdir -p " + STAGE_DIR + "/rootfs; " +
                     "if [ -f " + SYSTEM_RAW + " ]; then echo 'WARNING: system.raw still present!'; else echo 'Container unmounted, data wiped, and storage freed.'; fi";

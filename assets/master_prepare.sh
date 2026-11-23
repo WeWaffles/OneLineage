@@ -51,6 +51,25 @@ if ! mount | grep -q "$ROOTFS "; then
     $BB mount -t ext4 -o ro "$LOOP" "$ROOTFS"
 fi
 
+# An image the phone built from the OTA (build_pixelos.sh) keeps system_ext and
+# product as their own images, mounted over the system image's mount points like
+# on a real device. A merged system.raw (older installs) has them inside already.
+for P in system_ext product; do
+    [ -f "$STAGE/$P.raw" ] || continue
+    if ! mount | grep -q " $ROOTFS/$P "; then
+        for l in $($BB losetup -a | grep "/$P.raw" | cut -d: -f1); do
+            $BB losetup -d "$l" 2>/dev/null || true
+        done
+        PLOOP=$($BB losetup -f)
+        $BB losetup "$PLOOP" "$STAGE/$P.raw"
+        if $BB mount -t ext4 -o ro "$PLOOP" "$ROOTFS/$P"; then
+            echo "Mounted $P.raw on /$P ($PLOOP)"
+        else
+            echo "!!! could not mount $P.raw on $ROOTFS/$P"
+        fi
+    fi
+done
+
 mkdir -p "$ROOTFS/postinstall" "$ROOTFS/dev" "$ROOTFS/proc" "$ROOTFS/sys" \
     "$ROOTFS/linkerconfig" "$ROOTFS/vendor" "$ROOTFS/odm" "$ROOTFS/vendor_dlkm" \
     "$ROOTFS/mnt" "$ROOTFS/storage" "$ROOTFS/apex" "$ROOTFS/data"
@@ -144,12 +163,25 @@ XML
     # A copy (apk + native libs) is kept in $STAGE/sysapps, refreshed from the
     # installed one, so it survives the package manager dropping the /data
     # copy, and is bound in as /product/app/<Folder>.
-    HIDE_APPS="Chrome-Stub Aperture ApertureLensLauncher"
+    # Aperture and ApertureLensLauncher (the image's camera) are shown for now; add them
+    # back here to hide them when Pixel Camera is the only camera again.
+    HIDE_APPS="Chrome-Stub"
     # An app that was never installed can be seeded by putting its apk at
     # $STAGE/sysapps/<Folder>/<Folder>.apk.
     SYSTEM_APPS="Firefox:org.mozilla.firefox GoogleCamera:com.android.MGC_9_8_102"
     mkdir -p "$STAGE/extra/app"
+    # Whiteouts from an earlier run of a since-unhidden app must go.
+    find "$STAGE/extra/app" -maxdepth 1 -type c -exec rm -f {} + 2>/dev/null
     for a in $HIDE_APPS; do mknod "$STAGE/extra/app/$a" c 0 0; done
+    # The Pixel Camera port is not downloadable from a direct link, so the user
+    # drops it at Download/OnePixel/GoogleCamera.apk (any GCam build; the lens
+    # fix in app_storage_loop.sh is for the MGC_9_8_102 package). It is copied
+    # in once and then kept in $STAGE/sysapps like any other seeded app.
+    GC_SEED=/sdcard/Download/OnePixel/GoogleCamera.apk
+    if [ -s "$GC_SEED" ] && [ ! -f "$STAGE/sysapps/GoogleCamera/GoogleCamera.apk" ]; then
+        mkdir -p "$STAGE/sysapps/GoogleCamera"
+        cp "$GC_SEED" "$STAGE/sysapps/GoogleCamera/GoogleCamera.apk" && echo "Pixel Camera seeded from $GC_SEED"
+    fi
     SYSAPP_BINDS=""
     for e in $SYSTEM_APPS; do
         d=${e%%:*}; pkg=${e#*:}; KEEP="$STAGE/sysapps/$d"
@@ -159,6 +191,21 @@ XML
             rm -rf "$KEEP"; mkdir -p "$KEEP"
             cp "$SRC/base.apk" "$KEEP/$d.apk" && { [ ! -d "$SRC/lib" ] || cp -r "$SRC/lib" "$KEEP/"; } &&
                 echo "System app $d: copied from ${SRC#$STAGE/data}"
+        fi
+        # No copy yet (a fresh install has no guest data): take the one installed
+        # on One UI. It may be a split install, so base.apk becomes <Folder>.apk
+        # and the split_*.apk files and lib/ sit next to it; the package manager
+        # reads splits from a system app's folder.
+        if [ ! -f "$KEEP/$d.apk" ]; then
+            HP=$(pm path "$pkg" 2>/dev/null | sed -E 's/^package://')
+            HB=$(echo "$HP" | grep '/base\.apk$' | head -n 1)
+            if [ -n "$HB" ] && [ -f "$HB" ]; then
+                rm -rf "$KEEP"; mkdir -p "$KEEP"
+                cp "$HB" "$KEEP/$d.apk" || rm -rf "$KEEP"
+                for s in $(echo "$HP" | grep '/split_'); do cp "$s" "$KEEP/$(basename "$s")"; done
+                [ -d "$(dirname "$HB")/lib" ] && cp -r "$(dirname "$HB")/lib" "$KEEP/"
+                [ -f "$KEEP/$d.apk" ] && echo "System app $d: seeded from the One UI install ($(echo "$HP" | wc -l) apk files)"
+            fi
         fi
         # A seeded apk has no extracted native libs; system apps need them
         # next to the apk (lib/arm64) when the apk compresses them.
@@ -1084,6 +1131,22 @@ while true; do
         echo "$(date) $out" >> /data/app_storage.log
     fi
     last=$cur
+    # Pixel Camera port (MGC_9_8_102): it probes every camera id itself, drops the
+    # logical back camera and picks physical lens 5, which the PixelOS camera
+    # service cannot open ("No camera device with ID 5"). Its lens_bl_key pref
+    # "5,6" makes it use the back (2) and front (1/3) cameras instead. The
+    # prefs file only exists after the first launch, so this keeps checking; the
+    # app is stopped first and the file is rewritten in place (owner and label stay).
+    GP=com.android.MGC_9_8_102
+    GF=/data/user/0/$GP/shared_prefs/${GP}_preferences.xml
+    if [ -f "$GF" ] && ! grep -q 'name="lens_bl_key"' "$GF"; then
+        am force-stop $GP 2>/dev/null
+        if sed 's#</map>#    <string name="lens_bl_key">5,6</string>\n</map>#' "$GF" > "$GF.new" && [ -s "$GF.new" ]; then
+            cat "$GF.new" > "$GF"
+            echo "$(date) Pixel Camera: lens_bl_key set to 5,6" >> /data/app_storage.log
+        fi
+        rm -f "$GF.new"
+    fi
 done
 APPLOOP
 chmod 755 "$STAGE/data/local/tmp/app_storage_loop.sh" 2>/dev/null || true

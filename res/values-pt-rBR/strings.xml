@@ -70,7 +70,7 @@
     <string name="progress_connecting">Conectando ao lançamento oficial no SourceForge…</string>
     <string name="progress_downloading">Baixando: %1$d MB / %2$d MB (%3$d%%) • %4$.1f MB/s</string>
     <string name="progress_extracting">Extraindo a imagem com o 7-Zip ARM64…</string>
-    <string name="progress_installed">LineageOS 23.2 (%1$s) instalado com sucesso!</string>
+    <string name="progress_installed">PixelOS 16.2 instalado e adaptado. Pronto para iniciar.</string>
     <string name="progress_setup_failed">Falha na configuração: %1$s</string>
 
     <string name="launcher_safety_title">Proteção da tela inicial da One UI</string>
@@ -133,4 +133,12 @@
     <string name="log_export_start">Exportando registros…</string>
     <string name="log_export_done">Registros salvos em %1$s (%2$d ms)</string>
     <string name="log_export_failed">Falha ao exportar registros: %1$s</string>
+
+    <!-- Instalando o PixelOS a partir da OTA -->
+    <string name="pixelos_install_desc">PixelOS 16.2: baixa a ROM (cerca de 2,5 GB, só as partes necessárias) e a adapta para este celular.</string>
+    <string name="progress_patching">Adaptando o PixelOS para este celular…</string>
+    <string name="log_ota_resume">Uma instalação anterior foi interrompida; continuando.</string>
+    <string name="log_ota_fetch">[PIXELOS] Baixando a ROM: %1$s</string>
+    <string name="log_ota_downloaded">✓ ROM baixada e verificada com o manifesto.</string>
+    <string name="log_ota_patch_failed">Falha ao adaptar as imagens (código %1$d). Veja o log acima.</string>
 </resources>
